@@ -1,0 +1,15 @@
+{
+  "$schema": "https://dl.viam.dev/module.schema.json",
+  "module_id": "viam:screenshot-cam",
+  "visibility": "private",
+  "url": "",
+  "description": "Modular camera component: screenshot",
+  "models": [
+    {
+      "api": "rdk:component:camera",
+      "model": "viam:screenshot-cam:screenshot"
+    }
+  ],
+  "entrypoint": "./run.sh",
+  "first_run": ""
+}
