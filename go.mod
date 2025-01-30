@@ -1,4 +1,4 @@
-module screenshot-cam
+module github.com/viam-labs/screenshot-cam
 
 go 1.23
 
