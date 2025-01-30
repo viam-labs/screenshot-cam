@@ -12,6 +12,9 @@ module.tar.gz: build
 	rm -f $(BIN_OUTPUT_PATH)/module.tar.gz
 	tar czf $(BIN_OUTPUT_PATH)/module.tar.gz $(BIN_OUTPUT_PATH)/screenshot-cam
 
+windows:
+	GOOS=windows GOARCH=amd64 go build -tags no_cgo .
+
 setup: 
 	if [ "$(UNAME_S)" = "Linux" ]; then \
 		sudo apt-get install -y apt-utils coreutils tar libnlopt-dev libjpeg-dev pkg-config; \

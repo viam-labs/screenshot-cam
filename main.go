@@ -1,7 +1,7 @@
 package main
 
 import (
-	"screenshot-cam/models"
+	"github.com/viam-labs/screenshot-cam/models"
 	"context"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/module"
