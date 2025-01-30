@@ -2,7 +2,7 @@
   "$schema": "https://dl.viam.dev/module.schema.json",
   "module_id": "viam:screenshot-cam",
   "visibility": "private",
-  "url": "",
+  "url": "https://github.com/viam-labs/screenshot-cam",
   "description": "Modular camera component: screenshot",
   "models": [
     {
@@ -11,9 +11,9 @@
     }
   ],
   "build": {
-    "build": "go build .",
-    "path": "screenshot-cam"
+    "build": "make windows",
+    "path": "module.tar.gz"
   },
-  "entrypoint": "screenshot-cam",
+  "entrypoint": "screenshot-cam.exe",
   "first_run": ""
 }

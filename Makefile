@@ -13,7 +13,9 @@ module.tar.gz: build
 	tar czf $(BIN_OUTPUT_PATH)/module.tar.gz $(BIN_OUTPUT_PATH)/screenshot-cam
 
 windows:
-	GOOS=windows GOARCH=amd64 go build -tags no_cgo .
+	GOOS=windows GOARCH=amd64 go build -tags no_cgo -ldflags="-s -w" .
+	rm -f module.tar.gz
+	tar czf module.tar.gz screenshot-cam.exe meta.json
 
 setup: 
 	if [ "$(UNAME_S)" = "Linux" ]; then \
