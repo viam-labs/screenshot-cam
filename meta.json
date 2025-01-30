@@ -10,6 +10,10 @@
       "model": "viam:screenshot-cam:screenshot"
     }
   ],
-  "entrypoint": "./run.sh",
+  "build": {
+    "build": "go build .",
+    "path": "screenshot-cam"
+  },
+  "entrypoint": "screenshot-cam",
   "first_run": ""
 }
