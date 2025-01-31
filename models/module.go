@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"image/png"
+	"os"
 
 	"github.com/kbinani/screenshot"
 	"go.viam.com/rdk/components/camera"
@@ -102,10 +103,27 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 }
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
+	if session, err := getCurrentSession(); err != nil {
+		return nil, camera.ImageMetadata{}, err
+	} else {
+		s.logger.Infof("current session %d", session)
+	}
 	img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
 	if err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
+	func() {
+		// debugging block
+		hd, _ := os.UserHomeDir()
+		f, err := os.Create(hd + "/screenshot-in-mod.png")
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, img); err != nil {
+			panic(err)
+		}
+	}()
 	var buf bytes.Buffer
 	if err := png.Encode(bufio.NewWriter(&buf), img); err != nil {
 		return nil, camera.ImageMetadata{}, err
