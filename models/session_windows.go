@@ -25,3 +25,7 @@ func getCurrentSession() (uint32, error) {
 	_, _, err := getActiveConsoleSessionId.Call(uintptr(unsafe.Pointer(&sessionID)))
 	return sessionID, fixWinError(err)
 }
+
+func logWindowsAndDesktops() {
+	panic("next")
+}

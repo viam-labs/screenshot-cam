@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/kbinani/screenshot v0.0.0-20250118074034-a3924b7bbc8c
+	github.com/winlabs/gowin32 v0.0.0-20240930213947-f504d7e14639
 	go.viam.com/rdk v0.60.1
 	go.viam.com/utils v0.1.128
 )
