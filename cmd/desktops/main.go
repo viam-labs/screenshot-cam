@@ -1,5 +1,7 @@
 package main
 
 func main() {
-	spawnSelf()
+	if err := spawnSelf(" dump"); err != nil {
+		panic(err)
+	}
 }

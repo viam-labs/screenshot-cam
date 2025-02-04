@@ -32,8 +32,9 @@ func activeUserToken() (windows.Token, error) {
 	return windows.Token(hToken), nil
 }
 
-// runs the currently running binary as a subprocess in the context of the active console session ID
-func spawnSelf() error {
+// runs the currently running binary as a subprocess in the context of the active console session ID.
+// cmdArgs string is appended to the exec path and passed to the subprocess.
+func spawnSelf(cmdArgs string) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return err
@@ -62,7 +63,7 @@ func spawnSelf() error {
 	err = windows.CreateProcessAsUser(
 		token, // dupToken,
 		nil,
-		windows.StringToUTF16Ptr(execPath+" dump"),
+		windows.StringToUTF16Ptr(execPath+" "+cmdArgs),
 		nil,
 		nil,
 		false,
