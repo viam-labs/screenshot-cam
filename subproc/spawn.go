@@ -1,4 +1,4 @@
-package main
+package subproc
 
 import (
 	"errors"
@@ -34,7 +34,7 @@ func activeUserToken() (windows.Token, error) {
 
 // runs the currently running binary as a subprocess in the context of the active console session ID.
 // cmdArgs string is appended to the exec path and passed to the subprocess.
-func spawnSelf(cmdArgs string) error {
+func SpawnSelf(cmdArgs string) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return err
