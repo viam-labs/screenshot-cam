@@ -78,5 +78,6 @@ func SpawnSelf(cmdArgs string) error {
 	}
 	defer windows.CloseHandle(pi.Process)
 	defer windows.CloseHandle(pi.Thread)
-	panic("TODO WAIT")
+	_, err = windows.WaitForSingleObject(pi.Process, windows.INFINITE)
+	return err
 }
