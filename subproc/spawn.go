@@ -79,5 +79,6 @@ func SpawnSelf(cmdArgs string) error {
 	defer windows.CloseHandle(pi.Process)
 	defer windows.CloseHandle(pi.Thread)
 	_, err = windows.WaitForSingleObject(pi.Process, windows.INFINITE)
+	// todo: do something useful with error code from subproc. currently we're not detecting failure.
 	return err
 }
