@@ -35,3 +35,6 @@ format:
 update-rdk:
 	go get go.viam.com/rdk@latest
 	go mod tidy
+
+vet:
+	GOOS=windows go vet -tags no_cgo ./...
