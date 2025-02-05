@@ -44,13 +44,13 @@ func SpawnSelf(cmdArgs string) error {
 		return err
 	}
 	defer token.Close()
-	println("DO I NEED TO DO DUPTOKEN? WHY")
-	// var dupToken windows.Token
-	// err = windows.DuplicateTokenEx(userToken, windows.MAXIMUM_ALLOWED, nil, windows.SecurityImpersonation, windows.TokenPrimary, &dupToken)
+	// todo: why do some docs recommend this here?
+	// var token windows.Token
+	// err = windows.DuplicateTokenEx(origToken, windows.MAXIMUM_ALLOWED, nil, windows.SecurityImpersonation, windows.TokenPrimary, &token)
 	// if err != nil {
 	// 	return fmt.Errorf("Failed to duplicate token: %v", err)
 	// }
-	// defer dupToken.Close()
+	// defer token.Close()
 
 	si := new(windows.StartupInfo)
 	si.Cb = uint32(unsafe.Sizeof(*si))
@@ -61,13 +61,13 @@ func SpawnSelf(cmdArgs string) error {
 
 	// Create the process
 	err = windows.CreateProcessAsUser(
-		token, // dupToken,
+		token,
 		nil,
 		windows.StringToUTF16Ptr(execPath+" "+cmdArgs),
 		nil,
 		nil,
 		false,
-		windows.CREATE_NEW_CONSOLE,
+		0,
 		nil,
 		nil,
 		si,
