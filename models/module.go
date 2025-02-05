@@ -1,14 +1,14 @@
 package models
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
-	"image/png"
+	"fmt"
+	"math/rand/v2"
 	"os"
+	"path/filepath"
 
-	"github.com/kbinani/screenshot"
+	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/camera/rtppassthrough"
 	"go.viam.com/rdk/gostream"
@@ -103,32 +103,16 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 }
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
-	if session, err := getCurrentSession(); err != nil {
+	capturePath := filepath.Join(os.TempDir(), fmt.Sprintf("screenshot-cam-%d.png", rand.IntN(1000000)))
+	if err := subproc.SpawnSelf(" child " + capturePath); err != nil {
 		return nil, camera.ImageMetadata{}, err
-	} else {
-		s.logger.Infof("current session %d", session)
 	}
-	img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
+	defer os.Remove(capturePath)
+	buf, err := os.ReadFile(capturePath)
 	if err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
-	func() {
-		// debugging block
-		hd, _ := os.UserHomeDir()
-		f, err := os.Create(hd + "/screenshot-in-mod.png")
-		if err != nil {
-			panic(err)
-		}
-		defer f.Close()
-		if err := png.Encode(f, img); err != nil {
-			panic(err)
-		}
-	}()
-	var buf bytes.Buffer
-	if err := png.Encode(bufio.NewWriter(&buf), img); err != nil {
-		return nil, camera.ImageMetadata{}, err
-	}
-	return buf.Bytes(), camera.ImageMetadata{MimeType: "image/png"}, nil
+	return buf, camera.ImageMetadata{MimeType: "image/png"}, nil
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context) ([]camera.NamedImage, resource.ResponseMetadata, error) {
