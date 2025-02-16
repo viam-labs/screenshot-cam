@@ -109,7 +109,7 @@ func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context) (pointclou
 
 func (s *screenshotCamScreenshot) Properties(ctx context.Context) (camera.Properties, error) {
 	return camera.Properties{
-		MimeTypes: []string{"/iamge/png"},
+		MimeTypes: []string{"image/png"},
 	}, nil
 }
 
