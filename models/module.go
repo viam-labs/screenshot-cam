@@ -54,8 +54,7 @@ type screenshotCamScreenshot struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	/* Uncomment this if your model does not need to reconfigure. */
-	// resource.TriviallyReconfigurable
+	resource.TriviallyReconfigurable
 
 	// Uncomment this if the model does not have any goroutines that
 	// need to be shut down while closing.
@@ -85,21 +84,8 @@ func (s *screenshotCamScreenshot) Name() resource.Name {
 	return s.name
 }
 
-func (s *screenshotCamScreenshot) Reconfigure(ctx context.Context, deps resource.Dependencies, conf resource.Config) error {
-	myConf, err := resource.NativeConfig[*Config](conf)
-	if err != nil {
-		return err
-	}
-	s.cfg = myConf
-	return nil
-}
-
-func (s *screenshotCamScreenshot) NewClientFromConn(ctx context.Context, conn rpc.ClientConn, remoteName string, name resource.Name, logger logging.Logger) (camera.Camera, error) {
-	panic("not implemented")
-}
-
 func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gostream.ErrorHandler) (gostream.VideoStream, error) {
-	panic("not implemented")
+	return nil, errUnimplemented
 }
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
@@ -116,27 +102,21 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context) ([]camera.NamedImage, resource.ResponseMetadata, error) {
-	panic("not implemented")
+	return nil, resource.ResponseMetadata{}, errUnimplemented
 }
 
 func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context) (pointcloud.PointCloud, error) {
-	panic("not implemented")
+	return nil, errUnimplemented
 }
 
 func (s *screenshotCamScreenshot) Properties(ctx context.Context) (camera.Properties, error) {
-	panic("not implemented")
+	return camera.Properties{
+		MimeType: []string{"/iamge/png"},
+	}, nil
 }
 
 func (s *screenshotCamScreenshot) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
-	panic("not implemented")
-}
-
-func (s *screenshotCamScreenshot) SubscribeRTP(ctx context.Context, bufferSize int, packetsCB rtppassthrough.PacketCallback) (rtppassthrough.Subscription, error) {
-	panic("not implemented")
-}
-
-func (s *screenshotCamScreenshot) Unsubscribe(ctx context.Context, id rtppassthrough.SubscriptionID) error {
-	panic("not implemented")
+	return nil, errUnimplemented
 }
 
 func (s *screenshotCamScreenshot) Close(context.Context) error {

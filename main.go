@@ -30,7 +30,7 @@ func main() {
 		}
 	case "child":
 		// child is the subprocess started in session 1 by a session 0 parent. it does the work.
-		logger.Info("dumping a screenshot instead of starting module")
+		logger.Debugf("dumping a screenshot instead of starting module")
 		img, err := screenshot.CaptureDisplay(0)
 		if err != nil {
 			panic(err)
@@ -43,7 +43,7 @@ func main() {
 		if err := png.Encode(f, img); err != nil {
 			panic(err)
 		}
-		logger.Infof("wrote to %s", capturePath)
+		logger.Debugf("wrote to %s", capturePath)
 	default:
 		utils.ContextualMain(mainWithArgs, logger)
 	}
