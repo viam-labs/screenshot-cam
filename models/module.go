@@ -10,12 +10,10 @@ import (
 
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
-	"go.viam.com/rdk/components/camera/rtppassthrough"
 	"go.viam.com/rdk/gostream"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/resource"
-	"go.viam.com/utils/rpc"
 )
 
 var (
@@ -111,7 +109,7 @@ func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context) (pointclou
 
 func (s *screenshotCamScreenshot) Properties(ctx context.Context) (camera.Properties, error) {
 	return camera.Properties{
-		MimeType: []string{"/iamge/png"},
+		MimeTypes: []string{"/iamge/png"},
 	}, nil
 }
 
