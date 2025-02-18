@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -30,6 +31,15 @@ func activeUserToken() (windows.Token, error) {
 		return 0, fmt.Errorf("WTSQueryUserToken error %s", err)
 	}
 	return windows.Token(hToken), nil
+}
+
+// returns true if this is running as LocalSystem and SpawnSelf is necessary for desktop interaction.
+func ShouldSpawn() bool {
+	user, err := user.Current()
+	if err != nil {
+		return false
+	}
+	return user.Name == "SYSTEM"
 }
 
 // runs the currently running binary as a subprocess in the context of the active console session ID.

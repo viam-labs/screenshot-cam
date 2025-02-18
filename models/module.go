@@ -1,13 +1,17 @@
 package models
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image/png"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 
+	"github.com/kbinani/screenshot"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/gostream"
@@ -87,6 +91,17 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 }
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
+	if !subproc.ShouldSpawn() {
+		img, err := screenshot.CaptureDisplay(0)
+		if err != nil {
+			return nil, camera.ImageMetadata{}, err
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(bufio.NewWriter(&buf), img); err != nil {
+			return nil, camera.ImageMetadata{}, err
+		}
+		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/png"}, nil
+	}
 	capturePath := filepath.Join(os.TempDir(), fmt.Sprintf("screenshot-cam-%d.png", rand.IntN(1000000)))
 	if err := subproc.SpawnSelf(" child " + capturePath); err != nil {
 		return nil, camera.ImageMetadata{}, err
