@@ -49,28 +49,37 @@ func main() {
 	case "child":
 		// child is the subprocess started in session 1 by a session 0 parent. it does the work.
 		logger.Debugf("dumping a screenshot instead of starting module")
-		img, err := screenshot.CaptureDisplay(0)
-		if err != nil {
+		if err := captureToPath(logger, capturePath); err != nil {
 			panic(err)
 		}
+	default:
+		utils.ContextualMain(mainWithArgs, logger)
+	}
+}
+
+func captureToPath(logger logging.Logger, path string) error {
+	img, err := screenshot.CaptureDisplay(0)
+	if err != nil {
+		return err
+	}
+	if img.Rect.Size().X > 1920 {
 		resized := resize.Resize(1920, 0, img, resize.Bilinear)
 		var ok bool
 		img, ok = resized.(*image.RGBA)
 		if !ok {
 			panic("resized image is not RGBA")
 		}
-		f, err := os.Create(capturePath)
-		if err != nil {
-			panic(err)
-		}
-		defer f.Close()
-		if err := jpeg.Encode(f, img, nil); err != nil {
-			panic(err)
-		}
-		logger.Debugf("wrote to %s", capturePath)
-	default:
-		utils.ContextualMain(mainWithArgs, logger)
 	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := jpeg.Encode(f, img, nil); err != nil {
+		return err
+	}
+	logger.Debugf("wrote to %s", path)
+	return nil
 }
 
 func mainWithArgs(ctx context.Context, args []string, logger logging.Logger) error {
