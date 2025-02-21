@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image/png"
+	"image/jpeg"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -97,12 +97,12 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 			return nil, camera.ImageMetadata{}, err
 		}
 		var buf bytes.Buffer
-		if err := png.Encode(bufio.NewWriter(&buf), img); err != nil {
+		if err := jpeg.Encode(bufio.NewWriter(&buf), img, nil); err != nil {
 			return nil, camera.ImageMetadata{}, err
 		}
-		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/png"}, nil
+		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 	}
-	capturePath := filepath.Join(os.TempDir(), fmt.Sprintf("screenshot-cam-%d.png", rand.IntN(1000000)))
+	capturePath := filepath.Join(os.TempDir(), fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
 	if err := subproc.SpawnSelf(" child " + capturePath); err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
@@ -111,7 +111,7 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 	if err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
-	return buf, camera.ImageMetadata{MimeType: "image/png"}, nil
+	return buf, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context) ([]camera.NamedImage, resource.ResponseMetadata, error) {
@@ -124,7 +124,7 @@ func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context) (pointclou
 
 func (s *screenshotCamScreenshot) Properties(ctx context.Context) (camera.Properties, error) {
 	return camera.Properties{
-		MimeTypes: []string{"image/png"},
+		MimeTypes: []string{"image/jpeg"},
 	}, nil
 }
 

@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"image/png"
+	"image"
+	"image/jpeg"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/kbinani/screenshot"
+	"github.com/nfnt/resize"
 	"github.com/viam-labs/screenshot-cam/models"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
@@ -51,12 +53,18 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		resized := resize.Resize(1920, 0, img, resize.Bilinear)
+		var ok bool
+		img, ok = resized.(*image.RGBA)
+		if !ok {
+			panic("resized image is not RGBA")
+		}
 		f, err := os.Create(capturePath)
 		if err != nil {
 			panic(err)
 		}
 		defer f.Close()
-		if err := png.Encode(f, img); err != nil {
+		if err := jpeg.Encode(f, img, nil); err != nil {
 			panic(err)
 		}
 		logger.Debugf("wrote to %s", capturePath)
