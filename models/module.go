@@ -9,11 +9,10 @@ import (
 	"image/jpeg"
 	"math/rand/v2"
 	"os"
-	"os/user"
 	"path/filepath"
+	"strings"
 
 	"github.com/kbinani/screenshot"
-	errw "github.com/pkg/errors"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/gostream"
@@ -52,8 +51,9 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 type screenshotCamScreenshot struct {
 	name resource.Name
 
-	logger logging.Logger
-	cfg    *Config
+	logger       logging.Logger
+	cfg          *Config
+	hasWarnedTmp bool
 
 	cancelCtx  context.Context
 	cancelFunc func()
@@ -110,14 +110,16 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 	}
 	td := os.TempDir()
-	user, _ := user.Current()
-	s.logger.Infof("tempdir %s, user %s", td, user.Name)
-	if !pathExists(os.TempDir()) {
-		if err := os.MkdirAll(os.TempDir(), os.ModeDir); err != nil {
-			return nil, camera.ImageMetadata{}, errw.Wrap(err, "creating temp dir")
+	if strings.ToLower(td) == "c:\\windows\\systemtemp" {
+		// this is an experimental workaround for an access denied bug we've seen
+		newTd := "C:\\windows\\TEMP"
+		if !s.hasWarnedTmp {
+			s.hasWarnedTmp = true
+			s.logger.Warn("applying workaround to rewrite tempdir from %s to %s", td, newTd)
 		}
+		td = newTd
 	}
-	capturePath := filepath.Join(os.TempDir(), fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
+	capturePath := filepath.Join(td, fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
 	if err := subproc.SpawnSelf(" child " + capturePath); err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
