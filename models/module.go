@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/kbinani/screenshot"
 	"github.com/viam-labs/screenshot-cam/subproc"
@@ -50,8 +51,9 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 type screenshotCamScreenshot struct {
 	name resource.Name
 
-	logger logging.Logger
-	cfg    *Config
+	logger       logging.Logger
+	cfg          *Config
+	hasWarnedTmp bool
 
 	cancelCtx  context.Context
 	cancelFunc func()
@@ -90,6 +92,11 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 	return nil, errUnimplemented
 }
 
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
 	if !subproc.ShouldSpawn() {
 		img, err := screenshot.CaptureDisplay(0)
@@ -102,7 +109,17 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		}
 		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 	}
-	capturePath := filepath.Join(os.TempDir(), fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
+	td := os.TempDir()
+	if strings.ToLower(td) == "c:\\windows\\systemtemp" {
+		// this is an experimental workaround for an access denied bug we've seen
+		newTd := "C:\\windows\\TEMP"
+		if !s.hasWarnedTmp {
+			s.hasWarnedTmp = true
+			s.logger.Warn("applying workaround to rewrite tempdir from %s to %s", td, newTd)
+		}
+		td = newTd
+	}
+	capturePath := filepath.Join(td, fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
 	if err := subproc.SpawnSelf(" child " + capturePath); err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
