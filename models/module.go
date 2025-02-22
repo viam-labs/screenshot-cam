@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/kbinani/screenshot"
+	errw "github.com/pkg/errors"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/gostream"
@@ -90,6 +91,11 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 	return nil, errUnimplemented
 }
 
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
 	if !subproc.ShouldSpawn() {
 		img, err := screenshot.CaptureDisplay(0)
@@ -101,6 +107,11 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 			return nil, camera.ImageMetadata{}, err
 		}
 		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+	}
+	if !pathExists(os.TempDir()) {
+		if err := os.MkdirAll(os.TempDir(), os.ModeDir); err != nil {
+			return nil, camera.ImageMetadata{}, errw.Wrap(err, "creating temp dir")
+		}
 	}
 	capturePath := filepath.Join(os.TempDir(), fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
 	if err := subproc.SpawnSelf(" child " + capturePath); err != nil {
