@@ -9,6 +9,7 @@ import (
 	"image/jpeg"
 	"math/rand/v2"
 	"os"
+	"os/user"
 	"path/filepath"
 
 	"github.com/kbinani/screenshot"
@@ -108,6 +109,9 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		}
 		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 	}
+	td := os.TempDir()
+	user, _ := user.Current()
+	s.logger.Infof("tempdir %s, user %s", td, user.Name)
 	if !pathExists(os.TempDir()) {
 		if err := os.MkdirAll(os.TempDir(), os.ModeDir); err != nil {
 			return nil, camera.ImageMetadata{}, errw.Wrap(err, "creating temp dir")
