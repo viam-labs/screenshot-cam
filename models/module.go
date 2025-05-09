@@ -132,7 +132,20 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context) ([]camera.NamedImage, resource.ResponseMetadata, error) {
-	return nil, resource.ResponseMetadata{}, errUnimplemented
+	raw, md, err := s.Image(ctx, "image/jpg", nil)
+	if err != nil {
+		return nil, resource.ResponseMetadata{}, err
+	}
+
+	reader := bytes.NewReader(imgBytes)
+	img, _, err := image.Decode(reader)
+	if err != nil {
+		return nil, resource.ResponseMetadata{}, err
+	}
+
+	return []camera.NamedImage{
+		{img, "screen"},
+	}, resource.ResponseMetadata{time.Now()}, nil
 }
 
 func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context) (pointcloud.PointCloud, error) {
