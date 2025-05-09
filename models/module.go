@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"image/jpeg"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kbinani/screenshot"
 	"github.com/viam-labs/screenshot-cam/subproc"
@@ -132,12 +134,12 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context) ([]camera.NamedImage, resource.ResponseMetadata, error) {
-	raw, md, err := s.Image(ctx, "image/jpg", nil)
+	raw, _, err := s.Image(ctx, "image/jpg", nil)
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
 	}
 
-	reader := bytes.NewReader(imgBytes)
+	reader := bytes.NewReader(raw)
 	img, _, err := image.Decode(reader)
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
