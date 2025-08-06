@@ -1,6 +1,14 @@
 # screenshot-cam
 
-## subprocess control
+## Configuration
+
+```json
+{
+    "display_index": 0
+}
+```
+
+## Subprocess control
 
 This module needs to interact with the user desktop (i.e. take a screenshot) from a service context. In windows this is tricky because services are in session 0 and the user is in session 1.
 

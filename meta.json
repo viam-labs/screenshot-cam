@@ -7,7 +7,8 @@
   "models": [
     {
       "api": "rdk:component:camera",
-      "model": "viam:screenshot-cam:screenshot"
+      "model": "viam:screenshot-cam:screenshot",
+      "markdown_link": "README.md#configuration"
     }
   ],
   "build": {
