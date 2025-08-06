@@ -74,7 +74,10 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 	}
 
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
-	logger.Infof("Displays for screenshotting: %d", screenshot.NumActiveDisplays())
+	if !subproc.ShouldSpawn() {
+		// note: this will be wrong in the ShouldSpawn case so we don't log it
+		logger.Infof("Displays for screenshotting: %d", screenshot.NumActiveDisplays())
+	}
 
 	s := &screenshotCamScreenshot{
 		name:       rawConf.ResourceName(),
@@ -87,7 +90,7 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 }
 func (s *screenshotCamScreenshot) Reconfigure(ctx context.Context, deps resource.Dependencies, rawConf resource.Config) error {
 	conf, err := resource.NativeConfig[*Config](rawConf)
-	if err != nil {
+	if err == nil {
 		s.cfg = conf
 	}
 	return err

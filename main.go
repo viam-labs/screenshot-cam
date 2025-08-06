@@ -47,7 +47,7 @@ func main() {
 				panic(err)
 			}
 		}
-		delta := time.Now().Sub(t0)
+		delta := time.Since(t0)
 		fmt.Printf("captured %d screenshots in %s seconds, %f per second", *nTries, (delta / time.Second).String(), float64(*nTries)/float64(delta/time.Second))
 	case "child":
 		// child is the subprocess started in session 1 by a session 0 parent. it does the work.
