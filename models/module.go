@@ -38,7 +38,8 @@ func init() {
 
 type Config struct {
 	resource.TriviallyValidateConfig
-	DisplayIndex int // index of display to capture (relevant when there are multiple monitors)
+	// index of display to capture (relevant when there are multiple monitors)
+	DisplayIndex int `json:"display_index"`
 }
 
 // Validate ensures all parts of the config are valid and important fields exist.
@@ -75,6 +76,7 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 	}
 
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
+	logger.Infow("number of active displays for screenshotting", "count", screenshot.NumActiveDisplays())
 
 	s := &screenshotCamScreenshot{
 		name:       rawConf.ResourceName(),
@@ -101,7 +103,7 @@ func pathExists(path string) bool {
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
 	if !subproc.ShouldSpawn() {
-		img, err := screenshot.CaptureDisplay(0)
+		img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
 		if err != nil {
 			return nil, camera.ImageMetadata{}, err
 		}
