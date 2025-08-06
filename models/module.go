@@ -38,7 +38,8 @@ func init() {
 
 type Config struct {
 	resource.TriviallyValidateConfig
-	DisplayIndex int // index of display to capture (relevant when there are multiple monitors)
+	// index of display to capture (relevant when there are multiple monitors)
+	DisplayIndex int `json:"display_index"`
 }
 
 // Validate ensures all parts of the config are valid and important fields exist.
@@ -60,8 +61,6 @@ type screenshotCamScreenshot struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	resource.TriviallyReconfigurable
-
 	// Uncomment this if the model does not have any goroutines that
 	// need to be shut down while closing.
 	// resource.TriviallyCloseable
@@ -75,6 +74,10 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 	}
 
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
+	if !subproc.ShouldSpawn() {
+		// note: this will be wrong in the ShouldSpawn case so we don't log it
+		logger.Infof("Displays for screenshotting: %d", screenshot.NumActiveDisplays())
+	}
 
 	s := &screenshotCamScreenshot{
 		name:       rawConf.ResourceName(),
@@ -85,6 +88,13 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 	}
 	return s, nil
 }
+func (s *screenshotCamScreenshot) Reconfigure(ctx context.Context, deps resource.Dependencies, rawConf resource.Config) error {
+	conf, err := resource.NativeConfig[*Config](rawConf)
+	if err == nil {
+		s.cfg = conf
+	}
+	return err
+}
 
 func (s *screenshotCamScreenshot) Name() resource.Name {
 	return s.name
@@ -94,14 +104,9 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 	return nil, errUnimplemented
 }
 
-func pathExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
 	if !subproc.ShouldSpawn() {
-		img, err := screenshot.CaptureDisplay(0)
+		img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
 		if err != nil {
 			return nil, camera.ImageMetadata{}, err
 		}
@@ -117,12 +122,12 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		newTd := "C:\\windows\\TEMP"
 		if !s.hasWarnedTmp {
 			s.hasWarnedTmp = true
-			s.logger.Warn("applying workaround to rewrite tempdir from %s to %s", td, newTd)
+			s.logger.Warnf("applying workaround to rewrite tempdir from %s to %s", td, newTd)
 		}
 		td = newTd
 	}
 	capturePath := filepath.Join(td, fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
-	if err := subproc.SpawnSelf(" child " + capturePath); err != nil {
+	if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", capturePath, s.cfg.DisplayIndex)); err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
 	defer os.Remove(capturePath)

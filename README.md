@@ -1,6 +1,16 @@
 # screenshot-cam
 
-## subprocess control
+## Configuration
+
+```jsonc
+{
+    // `display_index` is used to select a secondary monitor, and defaults to 0.
+    // If you exceed the number of active displays, the module will log a subprocess panic on windows.
+    "display_index": 0
+}
+```
+
+## Subprocess control
 
 This module needs to interact with the user desktop (i.e. take a screenshot) from a service context. In windows this is tricky because services are in session 0 and the user is in session 1.
 
