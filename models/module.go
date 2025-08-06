@@ -124,7 +124,7 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		td = newTd
 	}
 	capturePath := filepath.Join(td, fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
-	if err := subproc.SpawnSelf(" child " + capturePath); err != nil {
+	if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", capturePath, s.cfg.DisplayIndex)); err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
 	defer os.Remove(capturePath)
