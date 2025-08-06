@@ -122,7 +122,7 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		newTd := "C:\\windows\\TEMP"
 		if !s.hasWarnedTmp {
 			s.hasWarnedTmp = true
-			s.logger.Warn("applying workaround to rewrite tempdir from %s to %s", td, newTd)
+			s.logger.Warnf("applying workaround to rewrite tempdir from %s to %s", td, newTd)
 		}
 		td = newTd
 	}
