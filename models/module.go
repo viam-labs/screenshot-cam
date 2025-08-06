@@ -61,8 +61,6 @@ type screenshotCamScreenshot struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	resource.TriviallyReconfigurable
-
 	// Uncomment this if the model does not have any goroutines that
 	// need to be shut down while closing.
 	// resource.TriviallyCloseable
@@ -76,7 +74,7 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 	}
 
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
-	logger.Infow("number of active displays for screenshotting", "count", screenshot.NumActiveDisplays())
+	logger.Infof("Displays for screenshotting: %d", screenshot.NumActiveDisplays())
 
 	s := &screenshotCamScreenshot{
 		name:       rawConf.ResourceName(),
@@ -87,6 +85,13 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 	}
 	return s, nil
 }
+func (s *screenshotCamScreenshot) Reconfigure(ctx context.Context, deps resource.Dependencies, rawConf resource.Config) error {
+	conf, err := resource.NativeConfig[*Config](rawConf)
+	if err != nil {
+		s.cfg = conf
+	}
+	return err
+}
 
 func (s *screenshotCamScreenshot) Name() resource.Name {
 	return s.name
@@ -94,11 +99,6 @@ func (s *screenshotCamScreenshot) Name() resource.Name {
 
 func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gostream.ErrorHandler) (gostream.VideoStream, error) {
 	return nil, errUnimplemented
-}
-
-func pathExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
