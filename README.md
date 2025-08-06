@@ -2,8 +2,10 @@
 
 ## Configuration
 
-```json
+```jsonc
 {
+    // `display_index` is used to select a secondary monitor, and defaults to 0.
+    // If you exceed the number of active displays, the module will log a subprocess panic on windows.
     "display_index": 0
 }
 ```
