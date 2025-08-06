@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/kbinani/screenshot"
@@ -19,58 +19,43 @@ import (
 	"go.viam.com/utils"
 )
 
-// var capturePath = flag.String("path", "", "filename to save image")
-// var nTries = flag.Int("n", 1, "number of images to capture")
-// var displayIndex = flag.Int("display", 0, "display index to capture when there are multiple monitors")
+// note: these flags are only relevant if the program is in parent/child mode.
+// Otherwise, the viam module system will take care of argument parsing.
+var programMode = flag.String("mode", "", "'parent' or 'child' for subprocess flow")
+var capturePath = flag.String("path", "", "filename to save image")
+var nTries = flag.Uint("n", 1, "number of images to capture")
+var displayIndex = flag.Uint("display", 0, "display index to capture when there are multiple monitors")
 
 func main() {
 	logger := module.NewLoggerFromArgs("screenshot-cam")
-	// note: we're doing this manual
-	var command string
-	var capturePath string
-	var nTries int = 1
-	var displayIndex int
-	var err error
-	if len(os.Args) >= 2 {
-		command = os.Args[1]
-	}
-	switch command {
+	flag.Parse()
+	switch *programMode {
 	case "parent":
 		fallthrough
 	case "child":
-		if len(os.Args) >= 3 {
-			capturePath = os.Args[2]
-		}
-		if len(os.Args) >= 4 {
-			nTries, err = strconv.Atoi(os.Args[3])
-			if err != nil {
-				nTries = 1
-				logger.Warnf("ignoring nTries parse error %s %s", os.Args[3], err)
-			}
-		}
-		if len(os.Args) >= 5 {
-			displayIndex, err = strconv.Atoi(os.Args[4])
-			if err != nil {
-				logger.Warnf("ignoring displayIndex parse error %s %s", os.Args[4], err)
-			}
+		if *capturePath == "" {
+			logger.Error("the -path argument is required in the subprocess flow")
+			return
 		}
 	}
-	switch command {
+	switch *programMode {
 	case "parent":
 		// parent is a test mode for spawning a child proc directly from session 0 CLI. see README.md for instructions.
 		t0 := time.Now()
-		for range nTries {
-			if err := subproc.SpawnSelf(fmt.Sprintf(" child %s %d %d", capturePath, 1, displayIndex)); err != nil {
+		for range *nTries {
+			if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", *capturePath, *displayIndex)); err != nil {
 				panic(err)
 			}
 		}
 		delta := time.Now().Sub(t0)
-		fmt.Printf("captured %d screenshots in %s seconds, %f per second", nTries, (delta / time.Second).String(), float64(nTries)/float64(delta/time.Second))
+		fmt.Printf("captured %d screenshots in %s seconds, %f per second", *nTries, (delta / time.Second).String(), float64(*nTries)/float64(delta/time.Second))
 	case "child":
 		// child is the subprocess started in session 1 by a session 0 parent. it does the work.
-		logger.Debugf("dumping a screenshot instead of starting module")
-		logger.Infof("%d active displays, using index %d", screenshot.NumActiveDisplays(), displayIndex)
-		if err := captureToPath(logger, capturePath, displayIndex); err != nil {
+		logger.Debugf("%d active displays, using index %d", screenshot.NumActiveDisplays(), *displayIndex)
+		if int(*displayIndex) >= screenshot.NumActiveDisplays() {
+			logger.Warnf("display index %d >= active displays %d, the subprocess may crash", *displayIndex, screenshot.NumActiveDisplays())
+		}
+		if err := captureToPath(logger, *capturePath, int(*displayIndex)); err != nil {
 			panic(err)
 		}
 	default:
