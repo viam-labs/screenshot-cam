@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"math/rand/v2"
 	"os"
@@ -21,6 +20,8 @@ import (
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/resource"
+	"go.viam.com/rdk/spatialmath"
+	rutils "go.viam.com/rdk/utils"
 )
 
 var (
@@ -43,12 +44,12 @@ type Config struct {
 }
 
 // Validate ensures all parts of the config are valid and important fields exist.
-// Returns implicit dependencies based on the config.
+// Returns implicit dependencies and optional dependencies based on the config.
 // The path is the JSON path in your robot's config (not the `Config` struct) to the
 // resource being validated; e.g. "components.0".
-func (cfg *Config) Validate(path string) ([]string, error) {
+func (cfg *Config) Validate(path string) ([]string, []string, error) {
 	// Add config validation code here
-	return nil, nil
+	return nil, nil, nil
 }
 
 type screenshotCamScreenshot struct {
@@ -114,7 +115,7 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		if err := jpeg.Encode(bufio.NewWriter(&buf), img, nil); err != nil {
 			return nil, camera.ImageMetadata{}, err
 		}
-		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+		return buf.Bytes(), camera.ImageMetadata{MimeType: rutils.MimeTypeJPEG}, nil
 	}
 	td := os.TempDir()
 	if strings.ToLower(td) == "c:\\windows\\systemtemp" {
@@ -135,24 +136,31 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 	if err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
-	return buf, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+	return buf, camera.ImageMetadata{MimeType: rutils.MimeTypeJPEG}, nil
 }
 
-func (s *screenshotCamScreenshot) Images(ctx context.Context) ([]camera.NamedImage, resource.ResponseMetadata, error) {
-	raw, _, err := s.Image(ctx, "image/jpg", nil)
+func (s *screenshotCamScreenshot) Images(
+	ctx context.Context,
+	_ []string,
+	_ map[string]interface{},
+) ([]camera.NamedImage, resource.ResponseMetadata, error) {
+	raw, _, err := s.Image(ctx, rutils.MimeTypeJPEG, nil)
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
 	}
 
-	reader := bytes.NewReader(raw)
-	img, _, err := image.Decode(reader)
+	namedImage, err := camera.NamedImageFromBytes(raw, "", rutils.MimeTypeJPEG)
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
 	}
 
 	return []camera.NamedImage{
-		{img, "screen"},
+		namedImage,
 	}, resource.ResponseMetadata{time.Now()}, nil
+}
+
+func (s *screenshotCamScreenshot) Geometries(_ context.Context, _ map[string]interface{}) ([]spatialmath.Geometry, error) {
+	return nil, errUnimplemented
 }
 
 func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context) (pointcloud.PointCloud, error) {
@@ -161,7 +169,7 @@ func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context) (pointclou
 
 func (s *screenshotCamScreenshot) Properties(ctx context.Context) (camera.Properties, error) {
 	return camera.Properties{
-		MimeTypes: []string{"image/jpeg"},
+		MimeTypes: []string{rutils.MimeTypeJPEG},
 	}, nil
 }
 
