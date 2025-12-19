@@ -1,24 +1,20 @@
 package models
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
-	"unsafe"
-
-	errw "github.com/pkg/errors"
 
 	"github.com/kbinani/screenshot"
-	"github.com/rodrigocfd/windigo/co"
-	"github.com/rodrigocfd/windigo/win"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/data"
@@ -102,120 +98,17 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 	return nil, errUnimplemented
 }
 
-func Capture(logger logging.Logger, index int) (image.Image, error) {
-	win.SetProcessDPIAware()
-	for _, dev := range win.EnumDisplayDevices("", 0) {
-		logger.Infof("dev %s %s", dev.DeviceName(), dev.DeviceString())
-	}
-	cx := win.GetSystemMetrics(co.SM_CXSCREEN)
-	cy := win.GetSystemMetrics(co.SM_CYSCREEN)
-	logger.Infof("dims %d %d", cx, cy)
-	mon := win.GetDesktopWindow().MonitorFromWindow(0)
-	info, _ := mon.GetMonitorInfo()
-	logger.Infof("info %d %d %d %d", info.RcMonitor.Top, info.RcMonitor.Right, info.RcMonitor.Bottom, info.RcMonitor.Left)
-	hdcScreen, err := win.HWND(0).GetDC()
-	if err != nil {
-		return nil, errw.Wrap(err, "GetDC")
-	}
-	defer win.HWND(0).ReleaseDC(hdcScreen)
-
-	monitors, err := hdcScreen.EnumDisplayMonitors(nil)
-	if err != nil {
-		return nil, errw.Wrap(err, "EnumDisplayMonitors")
-	}
-	for i, mon := range monitors {
-		logger.Infof("MON %d: %d %d %d %d", i, mon.Rc.Top, mon.Rc.Right, mon.Rc.Bottom, mon.Rc.Left)
-	}
-
-	bmp, err := hdcScreen.CreateCompatibleBitmap(int(cx), int(cy))
-	if err != nil {
-		return nil, errw.Wrap(err, "CreateCompatibleBitmap")
-	}
-	defer bmp.DeleteObject()
-	hdcMem, err := hdcScreen.CreateCompatibleDC()
-	defer hdcMem.DeleteDC()
-
-	bmpOld, err := hdcMem.SelectObjectBmp(bmp)
-	if err != nil {
-		return nil, errw.Wrap(err, "SelectObjectBmp")
-	}
-	defer hdcMem.SelectObjectBmp(bmpOld)
-
-	zero := win.POINT{X: 0, Y: 0}
-	err = hdcMem.BitBlt(
-		zero, win.SIZE{Cx: cx, Cy: cy},
-		hdcScreen, zero,
-		co.ROP_SRCCOPY,
-	)
-	if err != nil {
-		return nil, errw.Wrap(err, "BitBlt")
-	}
-	bi := win.BITMAPINFO{BmiHeader: win.BITMAPINFOHEADER{
-		Width: cx, Height: cy, Planes: 1, BitCount: 32, Compression: co.BI_RGB,
-	}}
-	bi.BmiHeader.SetSize()
-
-	bmpObj, err := bmp.GetObject()
-	if err != nil {
-		return nil, errw.Wrap(err, "GetObject")
-	}
-	bmpSize := bmpObj.CalcBitmapSize(bi.BmiHeader.BitCount)
-	rawMem, err := win.GlobalAlloc(co.GMEM_FIXED|co.GMEM_ZEROINIT, bmpSize)
-	if err != nil {
-		return nil, errw.Wrap(err, "GlobalAlloc")
-	}
-	defer rawMem.GlobalFree()
-
-	bmpSlice, err := rawMem.GlobalLockSlice()
-	if err != nil {
-		return nil, errw.Wrap(err, "GlobalLockSlice")
-	}
-	defer rawMem.GlobalUnlock()
-
-	_, err = hdcScreen.GetDIBits(bmp, 0, int(cy), bmpSlice, &bi, co.DIB_COLORS_RGB)
-	if err != nil {
-		return nil, errw.Wrap(err, "GetDIBits")
-	}
-	var bfh win.BITMAPFILEHEADER
-	bfh.SetBfType()
-	bfh.SetBfOffBits(uint32(unsafe.Sizeof(bfh) + unsafe.Sizeof(bi.BmiHeader)))
-	bfh.SetBfSize(bfh.BfOffBits() + uint32(bmpSize))
-
-	buf := bytes.NewBuffer(nil)
-	_, err = buf.Write(bfh.Serialize())
-	if err != nil {
-		return nil, errw.Wrap(err, "Write")
-	}
-	_, err = buf.Write(bi.BmiHeader.Serialize())
-	if err != nil {
-		return nil, errw.Wrap(err, "Write")
-	}
-	_, err = buf.Write(bmpSlice)
-	if err != nil {
-		return nil, errw.Wrap(err, "Write")
-	}
-	img, _, err := image.Decode(buf)
-	if err != nil {
-		return nil, errw.Wrap(err, "Decode")
-	}
-	return img, nil
-}
-
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
 	if !subproc.ShouldSpawn() {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-		_, err := Capture(s.logger, s.cfg.DisplayIndex)
-		// img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
+		img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
 		if err != nil {
 			return nil, camera.ImageMetadata{}, err
 		}
-		panic("todo")
-		// var buf bytes.Buffer
-		// if err := jpeg.Encode(bufio.NewWriter(&buf), img, nil); err != nil {
-		// 	return nil, camera.ImageMetadata{}, err
-		// }
-		// return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+		var buf bytes.Buffer
+		if err := jpeg.Encode(bufio.NewWriter(&buf), img, nil); err != nil {
+			return nil, camera.ImageMetadata{}, err
+		}
+		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 	}
 	td := os.TempDir()
 	if strings.ToLower(td) == "c:\\windows\\systemtemp" {

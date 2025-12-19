@@ -27,6 +27,3 @@ go.work.sum
 # Build outputs
 bin
 *tar.gz
-
-hello*.bmp
-hello*.jpg
