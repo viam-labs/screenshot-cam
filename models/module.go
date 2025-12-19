@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/kbinani/screenshot"
-	"github.com/rodrigocfd/windigo/win"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/data"
@@ -34,9 +33,6 @@ var (
 )
 
 func init() {
-	if err := win.SetProcessDPIAware(); err != nil {
-		println("warning: SetProcessDPIAware failed, expect trouble")
-	}
 	resource.RegisterComponent(camera.API, Screenshot,
 		resource.Registration[camera.Camera, *Config]{
 			Constructor: newScreenshotCamScreenshot,
@@ -73,11 +69,7 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 	}
 
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
-	shouldSpawn, err := subproc.ShouldSpawn()
-	if err != nil {
-		return nil, err
-	}
-	if !shouldSpawn {
+	if !subproc.ShouldSpawn() {
 		// note: this will be wrong in the ShouldSpawn case so we don't log it
 		logger.Infof("Displays for screenshotting: %d", screenshot.NumActiveDisplays())
 	}
@@ -122,11 +114,7 @@ func CheckSession(logger logging.Logger) error {
 }
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
-	shouldSpawn, err := subproc.ShouldSpawn()
-	if err != nil {
-		return nil, camera.ImageMetadata{}, err
-	}
-	if !shouldSpawn {
+	if !subproc.ShouldSpawn() {
 		if err := CheckSession(s.logger); err != nil {
 			s.logger.Errorf("error in CheckSession: %s", err)
 		}

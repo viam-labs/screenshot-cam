@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -35,14 +34,14 @@ func activeUserToken() (windows.Token, error) {
 	return windows.Token(hToken), nil
 }
 
-// returns true if this is running as LocalSystem and SpawnSelf is necessary for desktop interaction.
-func ShouldSpawn() (bool, error) {
-	user, err := user.Current()
-	if err != nil {
-		return false, err
+// returns true if this is running as session 0 and SpawnSelf is necessary for desktop interaction.
+func ShouldSpawn() bool {
+	pid := windows.GetCurrentProcessId()
+	var sid uint32
+	if err := windows.ProcessIdToSessionId(pid, &sid); err != nil {
+		return false
 	}
-	println("user.Name", user.Name)
-	return user.Name == "SYSTEM", nil
+	return sid == 0
 }
 
 // runs the currently running binary as a subprocess in the context of the active console session ID.
