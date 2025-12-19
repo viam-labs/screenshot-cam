@@ -25,7 +25,6 @@ setup:
 	go install golang.org/x/tools/cmd/goimports@latest
 	find . -name '*.go' -exec $(GOPATH)/goimports -w {} +
 
-
 clean:
 	rm -rf $(BIN_OUTPUT_PATH)/screenshot-cam $(BIN_OUTPUT_PATH)/module.tar.gz screenshot-cam
 

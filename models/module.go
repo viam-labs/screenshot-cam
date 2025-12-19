@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kbinani/screenshot"
+	"github.com/rodrigocfd/windigo/win"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/data"
@@ -23,6 +24,7 @@ import (
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/spatialmath"
+	"golang.org/x/sys/windows"
 )
 
 var (
@@ -32,6 +34,9 @@ var (
 )
 
 func init() {
+	if err := win.SetProcessDPIAware(); err != nil {
+		println("warning: SetProcessDPIAware failed, expect trouble")
+	}
 	resource.RegisterComponent(camera.API, Screenshot,
 		resource.Registration[camera.Camera, *Config]{
 			Constructor: newScreenshotCamScreenshot,
@@ -68,7 +73,11 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 	}
 
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
-	if !subproc.ShouldSpawn() {
+	shouldSpawn, err := subproc.ShouldSpawn()
+	if err != nil {
+		return nil, err
+	}
+	if !shouldSpawn {
 		// note: this will be wrong in the ShouldSpawn case so we don't log it
 		logger.Infof("Displays for screenshotting: %d", screenshot.NumActiveDisplays())
 	}
@@ -98,10 +107,35 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 	return nil, errUnimplemented
 }
 
+// CheckSession warns if you're not in the active console session.
+func CheckSession(logger logging.Logger) error {
+	var sid uint32
+	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &sid); err != nil {
+		return err
+	}
+	active := windows.WTSGetActiveConsoleSessionId()
+	logger.Infof("current session %d, active session %d", sid, active)
+	if sid != active {
+		logger.Warnw("current session is not the active session", "current", sid, "active", active)
+	}
+	return nil
+}
+
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
-	if !subproc.ShouldSpawn() {
+	shouldSpawn, err := subproc.ShouldSpawn()
+	if err != nil {
+		return nil, camera.ImageMetadata{}, err
+	}
+	if !shouldSpawn {
+		if err := CheckSession(s.logger); err != nil {
+			s.logger.Errorf("error in CheckSession: %s", err)
+		}
+		s.logger.Error("NON SHOULD SPAWN CASE")
 		img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
 		if err != nil {
+			if err := windows.GetLastError(); err != nil {
+				s.logger.Warnf("windows last error %s", err)
+			}
 			return nil, camera.ImageMetadata{}, err
 		}
 		var buf bytes.Buffer
