@@ -4,13 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"os"
 	"time"
 
 	"github.com/kbinani/screenshot"
-	"github.com/nfnt/resize"
 	"github.com/viam-labs/screenshot-cam/models"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
@@ -64,18 +62,19 @@ func main() {
 }
 
 func captureToPath(logger logging.Logger, path string, displayIndex int) error {
-	img, err := screenshot.CaptureDisplay(displayIndex)
+	img, err := models.Capture(logger, displayIndex)
+	// img, err := screenshot.CaptureDisplay(displayIndex)
 	if err != nil {
 		return err
 	}
-	if img.Rect.Size().X > 1920 {
-		resized := resize.Resize(1920, 0, img, resize.Bilinear)
-		var ok bool
-		img, ok = resized.(*image.RGBA)
-		if !ok {
-			panic("resized image is not RGBA")
-		}
-	}
+	// if img.Rect.Size().X > 1920 {
+	// 	resized := resize.Resize(1920, 0, img, resize.Bilinear)
+	// 	var ok bool
+	// 	img, ok = resized.(*image.RGBA)
+	// 	if !ok {
+	// 		panic("resized image is not RGBA")
+	// 	}
+	// }
 	f, err := os.Create(path)
 	if err != nil {
 		return err
