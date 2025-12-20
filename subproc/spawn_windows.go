@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -33,13 +33,14 @@ func activeUserToken() (windows.Token, error) {
 	return windows.Token(hToken), nil
 }
 
-// returns true if this is running as LocalSystem and SpawnSelf is necessary for desktop interaction.
+// returns true if this is running as session 0 and SpawnSelf is necessary for desktop interaction.
 func ShouldSpawn() bool {
-	user, err := user.Current()
-	if err != nil {
+	pid := windows.GetCurrentProcessId()
+	var sid uint32
+	if err := windows.ProcessIdToSessionId(pid, &sid); err != nil {
 		return false
 	}
-	return user.Name == "SYSTEM"
+	return sid == 0
 }
 
 // runs the currently running binary as a subprocess in the context of the active console session ID.
@@ -64,7 +65,14 @@ func SpawnSelf(cmdArgs string) error {
 
 	si := new(windows.StartupInfo)
 	si.Cb = uint32(unsafe.Sizeof(*si))
-	si.Desktop = windows.StringToUTF16Ptr("Winsta0\\Default")
+	si.Desktop, err = syscall.UTF16PtrFromString("Winsta0\\Default")
+	if err != nil {
+		return err
+	}
+	cmdLine, err := syscall.UTF16PtrFromString(execPath + " " + cmdArgs)
+	if err != nil {
+		return err
+	}
 
 	// Setup process info
 	pi := new(windows.ProcessInformation)
@@ -73,7 +81,7 @@ func SpawnSelf(cmdArgs string) error {
 	err = windows.CreateProcessAsUser(
 		token,
 		nil,
-		windows.StringToUTF16Ptr(execPath+" "+cmdArgs),
+		cmdLine,
 		nil,
 		nil,
 		false,

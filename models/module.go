@@ -17,15 +17,19 @@ import (
 	"github.com/kbinani/screenshot"
 	"github.com/viam-labs/screenshot-cam/subproc"
 	"go.viam.com/rdk/components/camera"
+	"go.viam.com/rdk/data"
 	"go.viam.com/rdk/gostream"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/resource"
+	"go.viam.com/rdk/spatialmath"
+	"golang.org/x/sys/windows"
 )
 
 var (
-	Screenshot       = resource.NewModel("viam", "screenshot-cam", "screenshot")
-	errUnimplemented = errors.New("unimplemented")
+	Screenshot                     = resource.NewModel("viam", "screenshot-cam", "screenshot")
+	errUnimplemented               = errors.New("unimplemented")
+	_                camera.Camera = (*screenshotCamScreenshot)(nil)
 )
 
 func init() {
@@ -40,15 +44,6 @@ type Config struct {
 	resource.TriviallyValidateConfig
 	// index of display to capture (relevant when there are multiple monitors)
 	DisplayIndex int `json:"display_index"`
-}
-
-// Validate ensures all parts of the config are valid and important fields exist.
-// Returns implicit dependencies based on the config.
-// The path is the JSON path in your robot's config (not the `Config` struct) to the
-// resource being validated; e.g. "components.0".
-func (cfg *Config) Validate(path string) ([]string, error) {
-	// Add config validation code here
-	return nil, nil
 }
 
 type screenshotCamScreenshot struct {
@@ -104,10 +99,30 @@ func (s *screenshotCamScreenshot) Stream(ctx context.Context, errHandlers ...gos
 	return nil, errUnimplemented
 }
 
+// CheckSession warns if you're not in the active console session.
+func CheckSession(logger logging.Logger) error {
+	var sid uint32
+	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &sid); err != nil {
+		return err
+	}
+	active := windows.WTSGetActiveConsoleSessionId()
+	logger.Debugf("current session %d, active session %d", sid, active)
+	if sid != active {
+		logger.Warnw("current session is not the active session", "current", sid, "active", active)
+	}
+	return nil
+}
+
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
 	if !subproc.ShouldSpawn() {
+		if err := CheckSession(s.logger); err != nil {
+			s.logger.Errorf("error in CheckSession: %s", err)
+		}
 		img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
 		if err != nil {
+			if err := windows.GetLastError(); err != nil {
+				s.logger.Warnf("windows last error %s", err)
+			}
 			return nil, camera.ImageMetadata{}, err
 		}
 		var buf bytes.Buffer
@@ -138,8 +153,9 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 	return buf, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 }
 
-func (s *screenshotCamScreenshot) Images(ctx context.Context) ([]camera.NamedImage, resource.ResponseMetadata, error) {
-	raw, _, err := s.Image(ctx, "image/jpg", nil)
+func (s *screenshotCamScreenshot) Images(ctx context.Context, filterSourceNames []string, extra map[string]interface{}) ([]camera.NamedImage, resource.ResponseMetadata, error) {
+	mimetype := "image/jpeg"
+	raw, _, err := s.Image(ctx, mimetype, nil)
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
 	}
@@ -150,12 +166,16 @@ func (s *screenshotCamScreenshot) Images(ctx context.Context) ([]camera.NamedIma
 		return nil, resource.ResponseMetadata{}, err
 	}
 
+	named, err := camera.NamedImageFromImage(img, "screen", mimetype, data.Annotations{})
+	if err != nil {
+		return nil, resource.ResponseMetadata{}, err
+	}
 	return []camera.NamedImage{
-		{img, "screen"},
-	}, resource.ResponseMetadata{time.Now()}, nil
+		named,
+	}, resource.ResponseMetadata{CapturedAt: time.Now()}, nil
 }
 
-func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context) (pointcloud.PointCloud, error) {
+func (s *screenshotCamScreenshot) NextPointCloud(ctx context.Context, extra map[string]any) (pointcloud.PointCloud, error) {
 	return nil, errUnimplemented
 }
 
@@ -173,4 +193,8 @@ func (s *screenshotCamScreenshot) Close(context.Context) error {
 	// Put close code here
 	s.cancelFunc()
 	return nil
+}
+
+func (s *screenshotCamScreenshot) Geometries(context.Context, map[string]interface{}) ([]spatialmath.Geometry, error) {
+	return nil, errUnimplemented
 }

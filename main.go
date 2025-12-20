@@ -17,6 +17,7 @@ import (
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/module"
 	"go.viam.com/utils"
+	"golang.org/x/sys/windows"
 )
 
 // note: these flags are only relevant if the program is in parent/child mode.
@@ -64,8 +65,14 @@ func main() {
 }
 
 func captureToPath(logger logging.Logger, path string, displayIndex int) error {
+	if err := models.CheckSession(logger); err != nil {
+		logger.Warnf("error checking session: %s", err)
+	}
 	img, err := screenshot.CaptureDisplay(displayIndex)
 	if err != nil {
+		if err := windows.GetLastError(); err != nil {
+			logger.Errorf("windows GetLastError %s", err.Error())
+		}
 		return err
 	}
 	if img.Rect.Size().X > 1920 {

@@ -4,7 +4,7 @@ UNAME_S ?= $(shell uname -s)
 GOPATH = $(HOME)/go/bin
 export PATH := ${PATH}:$(GOPATH) 
 
-build: format update-rdk
+build:
 	rm -f $(BIN_OUTPUT_PATH)/screenshot-cam
 	go build $(LDFLAGS) -o $(BIN_OUTPUT_PATH)/screenshot-cam main.go
 
@@ -24,7 +24,6 @@ setup:
 	# remove unused imports
 	go install golang.org/x/tools/cmd/goimports@latest
 	find . -name '*.go' -exec $(GOPATH)/goimports -w {} +
-
 
 clean:
 	rm -rf $(BIN_OUTPUT_PATH)/screenshot-cam $(BIN_OUTPUT_PATH)/module.tar.gz screenshot-cam
