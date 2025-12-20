@@ -154,7 +154,7 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context, filterSourceNames []string, extra map[string]interface{}) ([]camera.NamedImage, resource.ResponseMetadata, error) {
-	mimetype := "image/jpg"
+	mimetype := "image/jpeg"
 	raw, _, err := s.Image(ctx, mimetype, nil)
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
