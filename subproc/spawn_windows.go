@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"syscall"
 	"unsafe"
 
@@ -66,7 +65,7 @@ func SpawnSelf(cmdArgs string) error {
 
 	si := new(windows.StartupInfo)
 	si.Cb = uint32(unsafe.Sizeof(*si))
-	desktop, err := syscall.UTF16PtrFromString("Winsta0\\Default")
+	si.Desktop, err = syscall.UTF16PtrFromString("Winsta0\\Default")
 	if err != nil {
 		return err
 	}
@@ -74,11 +73,6 @@ func SpawnSelf(cmdArgs string) error {
 	if err != nil {
 		return err
 	}
-	pinner := &runtime.Pinner{}
-	pinner.Pin(desktop)
-	pinner.Pin(cmdLine)
-	defer pinner.Unpin()
-	si.Desktop = desktop
 
 	// Setup process info
 	pi := new(windows.ProcessInformation)

@@ -60,20 +60,18 @@ func main() {
 			panic(err)
 		}
 	default:
-		logger.Info("VERSION 2")
 		utils.ContextualMain(mainWithArgs, logger)
 	}
 }
 
 func captureToPath(logger logging.Logger, path string, displayIndex int) error {
-	println("INSIDE CAPTURETOPATH")
 	if err := models.CheckSession(logger); err != nil {
 		logger.Warnf("error checking session: %s", err)
 	}
 	img, err := screenshot.CaptureDisplay(displayIndex)
 	if err != nil {
 		if err := windows.GetLastError(); err != nil {
-			println("GetLastError", err.Error())
+			logger.Errorf("windows GetLastError %s", err.Error())
 		}
 		return err
 	}

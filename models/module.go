@@ -106,7 +106,7 @@ func CheckSession(logger logging.Logger) error {
 		return err
 	}
 	active := windows.WTSGetActiveConsoleSessionId()
-	logger.Infof("current session %d, active session %d", sid, active)
+	logger.Debugf("current session %d, active session %d", sid, active)
 	if sid != active {
 		logger.Warnw("current session is not the active session", "current", sid, "active", active)
 	}
@@ -118,7 +118,6 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		if err := CheckSession(s.logger); err != nil {
 			s.logger.Errorf("error in CheckSession: %s", err)
 		}
-		s.logger.Error("NON SHOULD SPAWN CASE")
 		img, err := screenshot.CaptureDisplay(s.cfg.DisplayIndex)
 		if err != nil {
 			if err := windows.GetLastError(); err != nil {
