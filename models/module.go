@@ -115,6 +115,8 @@ func CheckSession(logger logging.Logger) error {
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
 	if !subproc.ShouldSpawn() {
+		// note: this code isn't reachable on windows in service mode; the NON ShouldSpawn
+		// path hits `-mode child` in main.go.
 		if err := CheckSession(s.logger); err != nil {
 			s.logger.Errorf("error in CheckSession: %s", err)
 		}
@@ -142,6 +144,9 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		td = newTd
 	}
 	capturePath := filepath.Join(td, fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
+	// careful: if you modify the SpawnSelf call, think through the recursion risk. The spawned subprocess
+	// should not itself check ShouldSpawn and spawn again. (Because if ShouldSpawn breaks, you'll create
+	// infinite subprocs).
 	if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", capturePath, s.cfg.DisplayIndex)); err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
