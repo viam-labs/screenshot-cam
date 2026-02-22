@@ -133,6 +133,9 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		}
 		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 	}
+	if !subproc.HasDesktopSession() {
+		return nil, camera.ImageMetadata{}, subproc.ErrNoDesktopSession
+	}
 	td := os.TempDir()
 	if strings.ToLower(td) == "c:\\windows\\systemtemp" {
 		// this is an experimental workaround for an access denied bug we've seen

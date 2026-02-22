@@ -15,7 +15,26 @@ var (
 	wts32            = windows.NewLazySystemDLL("wtsapi32.dll")
 	getActiveConsole = kernel32.NewProc("WTSGetActiveConsoleSessionId")
 	queryToken       = wts32.NewProc("WTSQueryUserToken")
+
+	// ErrNoDesktopSession is returned when there is no interactive desktop session available for screenshotting.
+	ErrNoDesktopSession = errors.New("no interactive desktop session available (is a user logged in at the console?)")
 )
+
+// HasDesktopSession returns true if there is an active console session with a valid user token.
+func HasDesktopSession() bool {
+	rawSession, _, _ := getActiveConsole.Call()
+	sessionID := uint32(rawSession)
+	if sessionID == 0xFFFFFFFF {
+		return false
+	}
+	var hToken windows.Handle
+	ret, _, _ := queryToken.Call(uintptr(sessionID), uintptr(unsafe.Pointer(&hToken)))
+	if ret == 0 {
+		return false
+	}
+	windows.CloseHandle(hToken)
+	return true
+}
 
 func activeUserToken() (windows.Token, error) {
 	rawSession, _, _ := getActiveConsole.Call()
@@ -23,12 +42,12 @@ func activeUserToken() (windows.Token, error) {
 	// error value from here
 	// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-wtsgetactiveconsolesessionid#return-value
 	if sessionID == 0xFFFFFFFF {
-		return 0, errors.New("failed to get active console")
+		return 0, ErrNoDesktopSession
 	}
 	var hToken windows.Handle
 	ret, _, err := queryToken.Call(uintptr(sessionID), uintptr(unsafe.Pointer(&hToken)))
 	if ret == 0 {
-		return 0, fmt.Errorf("WTSQueryUserToken error %s", err)
+		return 0, fmt.Errorf("WTSQueryUserToken for session %d: %s", sessionID, err)
 	}
 	return windows.Token(hToken), nil
 }
@@ -97,6 +116,15 @@ func SpawnSelf(cmdArgs string) error {
 	defer windows.CloseHandle(pi.Process)
 	defer windows.CloseHandle(pi.Thread)
 	_, err = windows.WaitForSingleObject(pi.Process, windows.INFINITE)
-	// todo: do something useful with error code from subproc. currently we're not detecting failure.
-	return err
+	if err != nil {
+		return fmt.Errorf("WaitForSingleObject failed: %v", err)
+	}
+	var exitCode uint32
+	if err := windows.GetExitCodeProcess(pi.Process, &exitCode); err != nil {
+		return fmt.Errorf("GetExitCodeProcess failed: %v", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("child process exited with code %d", exitCode)
+	}
+	return nil
 }

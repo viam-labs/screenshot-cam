@@ -57,7 +57,8 @@ func main() {
 			logger.Warnf("display index %d >= active displays %d, the subprocess may crash", *displayIndex, screenshot.NumActiveDisplays())
 		}
 		if err := captureToPath(logger, *capturePath, int(*displayIndex)); err != nil {
-			panic(err)
+			logger.Errorf("child process capture failed: %s", err)
+			os.Exit(1)
 		}
 	default:
 		utils.ContextualMain(mainWithArgs, logger)
