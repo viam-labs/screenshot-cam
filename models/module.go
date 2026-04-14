@@ -5,13 +5,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"image"
 	"image/jpeg"
-	"math/rand/v2"
-	"os"
-	"path/filepath"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/kbinani/screenshot"
@@ -49,17 +45,16 @@ type Config struct {
 type screenshotCamScreenshot struct {
 	name resource.Name
 
-	logger       logging.Logger
-	cfg          *Config
-	hasWarnedTmp bool
+	logger logging.Logger
+	cfg    *Config
 
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	// Uncomment this if the model does not have any goroutines that
-	// need to be shut down while closing.
-	// resource.TriviallyCloseable
-
+	// persistent child subprocess used in session 0 mode. nil until first use,
+	// re-created after any I/O failure.
+	childMu sync.Mutex
+	child   *subproc.PersistentChild
 }
 
 func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (camera.Camera, error) {
@@ -113,10 +108,51 @@ func CheckSession(logger logging.Logger) error {
 	return nil
 }
 
+// getOrStartChild returns the cached persistent child, starting one if needed.
+// It does not hold the child mutex while doing IPC; callers should call
+// CaptureJPEG directly on the returned handle.
+func (s *screenshotCamScreenshot) getOrStartChild() (*subproc.PersistentChild, error) {
+	s.childMu.Lock()
+	defer s.childMu.Unlock()
+	if s.child != nil {
+		return s.child, nil
+	}
+	child, err := subproc.StartPersistentChild("-mode persistent")
+	if err != nil {
+		return nil, err
+	}
+	// Drain child stderr in the background. zap log lines from the subprocess
+	// land here; surface them through our logger so they show up in module logs.
+	go func(r *bufio.Reader) {
+		for {
+			line, err := r.ReadString('\n')
+			if len(line) > 0 {
+				s.logger.Debugf("[child] %s", line)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}(bufio.NewReader(child.Stderr()))
+	s.child = child
+	return child, nil
+}
+
+// invalidateChild closes and clears `c` if it's still the currently cached
+// child. Called after an IPC error so the next request starts a fresh process.
+func (s *screenshotCamScreenshot) invalidateChild(c *subproc.PersistentChild) {
+	s.childMu.Lock()
+	defer s.childMu.Unlock()
+	if s.child == c {
+		s.child = nil
+		go c.Close() // don't block the caller on process teardown
+	}
+}
+
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
 	if !subproc.ShouldSpawn() {
 		// note: this code isn't reachable on windows in service mode; the NON ShouldSpawn
-		// path hits `-mode child` in main.go.
+		// path hits the persistent child below.
 		if err := CheckSession(s.logger); err != nil {
 			s.logger.Errorf("error in CheckSession: %s", err)
 		}
@@ -133,29 +169,21 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 		}
 		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 	}
-	td := os.TempDir()
-	if strings.ToLower(td) == "c:\\windows\\systemtemp" {
-		// this is an experimental workaround for an access denied bug we've seen
-		newTd := "C:\\windows\\TEMP"
-		if !s.hasWarnedTmp {
-			s.hasWarnedTmp = true
-			s.logger.Warnf("applying workaround to rewrite tempdir from %s to %s", td, newTd)
-		}
-		td = newTd
-	}
-	capturePath := filepath.Join(td, fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
-	// careful: if you modify the SpawnSelf call, think through the recursion risk. The spawned subprocess
-	// should not itself check ShouldSpawn and spawn again. (Because if ShouldSpawn breaks, you'll create
-	// infinite subprocs).
-	if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", capturePath, s.cfg.DisplayIndex)); err != nil {
-		return nil, camera.ImageMetadata{}, err
-	}
-	defer os.Remove(capturePath)
-	buf, err := os.ReadFile(capturePath)
+	// Session 0 path: reuse a persistent subprocess running in the active
+	// console session. Recreating the process per request was the dominant
+	// latency on Windows.
+	child, err := s.getOrStartChild()
 	if err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
-	return buf, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+	jpegBytes, err := child.CaptureJPEG(uint32(s.cfg.DisplayIndex))
+	if err != nil {
+		// Pipe error or the child died (e.g. user logged out, taking the
+		// session with it). Drop this child so the next call respawns.
+		s.invalidateChild(child)
+		return nil, camera.ImageMetadata{}, err
+	}
+	return jpegBytes, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context, filterSourceNames []string, extra map[string]interface{}) ([]camera.NamedImage, resource.ResponseMetadata, error) {
@@ -195,8 +223,14 @@ func (s *screenshotCamScreenshot) DoCommand(ctx context.Context, cmd map[string]
 }
 
 func (s *screenshotCamScreenshot) Close(context.Context) error {
-	// Put close code here
 	s.cancelFunc()
+	s.childMu.Lock()
+	c := s.child
+	s.child = nil
+	s.childMu.Unlock()
+	if c != nil {
+		c.Close()
+	}
 	return nil
 }
 
