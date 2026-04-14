@@ -4,6 +4,7 @@ package subproc
 
 import (
 	"errors"
+	"io"
 )
 
 // returns true if this is running as LocalSystem and SpawnSelf is necessary for desktop interaction.
@@ -16,3 +17,19 @@ func ShouldSpawn() bool {
 func SpawnSelf(cmdArgs string) error {
 	return errors.New("SpawnSelf not supported on non-windows platforms; ShouldSpawn always returns false and your code should use that as a guard")
 }
+
+// PersistentChild is a no-op stub on non-windows platforms.
+type PersistentChild struct{}
+
+// StartPersistentChild is unsupported off Windows.
+func StartPersistentChild(cmdArgs string) (*PersistentChild, error) {
+	return nil, errors.New("StartPersistentChild not supported on non-windows platforms")
+}
+
+func (*PersistentChild) CaptureJPEG(displayIndex uint32) ([]byte, error) {
+	return nil, errors.New("not supported on non-windows platforms")
+}
+
+func (*PersistentChild) Stderr() io.Reader { return nil }
+
+func (*PersistentChild) Close() error { return nil }
