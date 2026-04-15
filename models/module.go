@@ -164,7 +164,7 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 			return nil, camera.ImageMetadata{}, err
 		}
 		var buf bytes.Buffer
-		if err := jpeg.Encode(bufio.NewWriter(&buf), img, nil); err != nil {
+		if err := jpeg.Encode(&buf, img, nil); err != nil {
 			return nil, camera.ImageMetadata{}, err
 		}
 		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
