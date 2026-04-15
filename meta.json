@@ -13,7 +13,10 @@
   ],
   "build": {
     "build": "make windows",
-    "path": "module.tar.gz"
+    "path": "module.tar.gz",
+    "arch": [
+        "windows/amd64"
+    ]
   },
   "entrypoint": "screenshot-cam.exe",
   "first_run": ""
