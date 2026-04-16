@@ -10,6 +10,7 @@ import (
 	"image/jpeg"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/kbinani/screenshot"
@@ -29,6 +30,8 @@ var programMode = flag.String("mode", "", "'parent', 'child', or 'persistent' fo
 var capturePath = flag.String("path", "", "filename to save image (parent/child modes only)")
 var nTries = flag.Uint("n", 1, "number of images to capture (parent mode only)")
 var displayIndex = flag.Uint("display", 0, "display index to capture when there are multiple monitors")
+var resizeWidth = flag.Uint("resize-width", 0, "resize captured image to this width (0 = no resize)")
+var resizeHeight = flag.Uint("resize-height", 0, "resize captured image to this height (0 = no resize)")
 
 // newStderrLogger builds a debug-level logger that writes to stderr only.
 // Used by the `persistent` and `child` subprocess modes, where stdout is
@@ -45,10 +48,12 @@ func main() {
 	flag.Parse()
 	var logger logging.Logger
 	switch *programMode {
-	case "persistent", "child":
+	case "persistent":
 		// Don't use module.NewLoggerFromArgs here: it appends to os.Stdout,
 		// which is our binary protocol channel.
 		logger = newStderrLogger("screenshot-cam-child")
+	case "child":
+		logger = module.NewLoggerFromArgs("screenshot-cam-child")
 	default:
 		logger = module.NewLoggerFromArgs("screenshot-cam")
 	}
@@ -61,9 +66,19 @@ func main() {
 	}
 	switch *programMode {
 	case "parent":
-		// parent is a manual test mode for driving a persistent child directly
+		// parent is a test mode for spawning a child proc directly from session 0 CLI. see README.md for instructions.
+		t0 := time.Now()
+		for range *nTries {
+			if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", *capturePath, *displayIndex)); err != nil {
+				panic(err)
+			}
+		}
+		delta := time.Since(t0)
+		fmt.Printf("captured %d screenshots in %s seconds, %f per second", *nTries, (delta / time.Second).String(), float64(*nTries)/float64(delta/time.Second))
+	case "pparent":
+		// pparent is a manual test mode for driving a persistent child directly
 		// from a session 0 CLI. see README.md for instructions.
-		child, err := subproc.StartPersistentChild("-mode persistent")
+		child, err := subproc.StartPersistentChild("-mode persistent", uint32(*displayIndex), 3)
 		if err != nil {
 			panic(err)
 		}
@@ -73,16 +88,19 @@ func main() {
 
 		t0 := time.Now()
 		for i := uint(0); i < *nTries; i++ {
-			data, err := child.CaptureJPEG(uint32(*displayIndex))
+			data, err := child.LatestFrame()
 			if err != nil {
 				panic(err)
 			}
 			path := *capturePath
 			if *nTries > 1 {
-				path = fmt.Sprintf("%s.%d.jpg", *capturePath, i)
+				path = filepath.Join(*capturePath, fmt.Sprintf("screenshot-cam.%d.jpg", i))
 			}
 			if err := os.WriteFile(path, data, 0644); err != nil {
 				panic(err)
+			}
+			if *nTries > 1 {
+				time.Sleep(100 * time.Millisecond) // pace manual test
 			}
 		}
 		delta := time.Since(t0)
@@ -100,14 +118,14 @@ func main() {
 		}
 	case "persistent":
 		// persistent is the long-running subprocess started by the module in
-		// session 0. It serves capture requests from stdin and writes JPEGs to
-		// stdout. See subproc.RunChildLoop for the wire protocol.
+		// session 0. It continuously captures screenshots and streams them to
+		// the parent over stdout. See subproc.RunContinuousChildLoop.
 		if err := models.CheckSession(logger); err != nil {
 			logger.Warnf("error checking session: %s", err)
 		}
 		logger.Debugf("%d active displays at startup", screenshot.NumActiveDisplays())
-		if err := subproc.RunChildLoop(func(d uint32) ([]byte, error) {
-			return captureJPEG(logger, int(d))
+		if err := subproc.RunContinuousChildLoop(func(d uint32, buf *bytes.Buffer) ([]byte, error) {
+			return captureJPEG(logger, int(d), *resizeWidth, *resizeHeight, buf)
 		}); err != nil {
 			logger.Errorf("persistent child loop ended: %s", err)
 			os.Exit(1)
@@ -117,9 +135,11 @@ func main() {
 	}
 }
 
-// captureJPEG grabs a screenshot of the given display, downsizes anything
-// wider than 1920px, and returns the JPEG-encoded bytes.
-func captureJPEG(logger logging.Logger, displayIndex int) ([]byte, error) {
+// captureJPEG grabs a screenshot of the given display, optionally resizes it,
+// and returns the JPEG-encoded bytes. If targetW/targetH are both non-zero they
+// take priority; otherwise images wider than 1920px are downscaled to fit.
+func captureJPEG(logger logging.Logger, displayIndex int, targetW, targetH uint, buf *bytes.Buffer) ([]byte, error) {
+	buf.Reset()
 	img, err := screenshot.CaptureDisplay(displayIndex)
 	if err != nil {
 		if lastErr := windows.GetLastError(); lastErr != nil {
@@ -127,7 +147,15 @@ func captureJPEG(logger logging.Logger, displayIndex int) ([]byte, error) {
 		}
 		return nil, err
 	}
-	if img.Rect.Size().X > 1920 {
+	if targetW > 0 && targetH > 0 {
+		// TODO: nfnt/resize is pure-go and not that fast
+		resized := resize.Resize(targetW, targetH, img, resize.Bilinear)
+		var ok bool
+		img, ok = resized.(*image.RGBA)
+		if !ok {
+			return nil, errors.New("resized image is not RGBA")
+		}
+	} else if img.Bounds().Dx() > 1920 {
 		resized := resize.Resize(1920, 0, img, resize.Bilinear)
 		var ok bool
 		img, ok = resized.(*image.RGBA)
@@ -135,8 +163,7 @@ func captureJPEG(logger logging.Logger, displayIndex int) ([]byte, error) {
 			return nil, errors.New("resized image is not RGBA")
 		}
 	}
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, nil); err != nil {
+	if err := jpeg.Encode(buf, img, nil); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -146,7 +173,8 @@ func captureToPath(logger logging.Logger, path string, displayIndex int) error {
 	if err := models.CheckSession(logger); err != nil {
 		logger.Warnf("error checking session: %s", err)
 	}
-	data, err := captureJPEG(logger, displayIndex)
+	var buf bytes.Buffer
+	data, err := captureJPEG(logger, displayIndex, 0, 0, &buf)
 	if err != nil {
 		return err
 	}

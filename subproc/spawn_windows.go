@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -47,10 +49,6 @@ func ShouldSpawn() bool {
 
 // runs the currently running binary as a subprocess in the context of the active console session ID.
 // cmdArgs string is appended to the exec path and passed to the subprocess.
-//
-// Prefer StartPersistentChild for the hot path; SpawnSelf creates a fresh
-// process per call and is mainly retained for the manual `-mode parent` test
-// flow described in README.md.
 func SpawnSelf(cmdArgs string) error {
 	execPath, err := os.Executable()
 	if err != nil {
@@ -61,6 +59,13 @@ func SpawnSelf(cmdArgs string) error {
 		return err
 	}
 	defer token.Close()
+	// todo: why do some docs recommend this here?
+	// var token windows.Token
+	// err = windows.DuplicateTokenEx(origToken, windows.MAXIMUM_ALLOWED, nil, windows.SecurityImpersonation, windows.TokenPrimary, &token)
+	// if err != nil {
+	// 	return fmt.Errorf("Failed to duplicate token: %v", err)
+	// }
+	// defer token.Close()
 
 	si := new(windows.StartupInfo)
 	si.Cb = uint32(unsafe.Sizeof(*si))
@@ -101,9 +106,9 @@ func SpawnSelf(cmdArgs string) error {
 }
 
 // PersistentChild is a long-running subprocess (started via CreateProcessAsUser
-// in the active console session) that serves capture requests over stdio
-// pipes. Reusing the process across calls amortizes the (substantial) cost of
-// spawning a fresh Go binary for every screenshot.
+// in the active console session) that continuously captures screenshots and
+// streams them back over a stdout pipe. The parent reads frames into a
+// RingBuffer and serves them to callers via LatestFrame.
 type PersistentChild struct {
 	process windows.Handle
 	thread  windows.Handle
@@ -111,7 +116,11 @@ type PersistentChild struct {
 	stdout  *os.File
 	stderr  *os.File
 
-	mu        sync.Mutex // serializes request/response on stdin/stdout
+	buf        *RingBuffer
+	readerErr  atomic.Pointer[error] // set by readLoop on fatal pipe error
+	firstFrame chan struct{}         // closed after the first Store
+	done       chan struct{}         // closed when readLoop exits
+
 	closeOnce sync.Once
 }
 
@@ -141,10 +150,11 @@ func makeInheritablePipe(childIsRead bool) (child, parent windows.Handle, err er
 
 // StartPersistentChild launches the current binary as a subprocess in the
 // active console session with stdio plumbed back over inheritable pipes.
-// cmdArgs is appended to the exec path. The returned PersistentChild can serve
-// many CaptureJPEG calls; on any I/O error the caller should Close it and
-// start a new one.
-func StartPersistentChild(cmdArgs string) (_ *PersistentChild, retErr error) {
+// cmdArgs is appended to the exec path. The child immediately begins capturing
+// the given display and streaming frames. The returned PersistentChild serves
+// LatestFrame from a lock-free ring buffer; on any fatal error the caller
+// should Close it and start a new one.
+func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (_ *PersistentChild, retErr error) {
 	execPath, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -234,32 +244,86 @@ func StartPersistentChild(cmdArgs string) (_ *PersistentChild, retErr error) {
 	windows.CloseHandle(stdoutChild)
 	windows.CloseHandle(stderrChild)
 
-	return &PersistentChild{
-		process: pi.Process,
-		thread:  pi.Thread,
-		stdin:   os.NewFile(uintptr(stdinParent), "child-stdin"),
-		stdout:  os.NewFile(uintptr(stdoutParent), "child-stdout"),
-		stderr:  os.NewFile(uintptr(stderrParent), "child-stderr"),
-	}, nil
+	stdinFile := os.NewFile(uintptr(stdinParent), "child-stdin")
+
+	// Send initial config (display index) to the child.
+	if err := writeConfig(stdinFile, displayIndex); err != nil {
+		stdinFile.Close()
+		windows.CloseHandle(pi.Process)
+		windows.CloseHandle(pi.Thread)
+		return nil, fmt.Errorf("writing initial config: %w", err)
+	}
+
+	pc := &PersistentChild{
+		process:    pi.Process,
+		thread:     pi.Thread,
+		stdin:      stdinFile,
+		stdout:     os.NewFile(uintptr(stdoutParent), "child-stdout"),
+		stderr:     os.NewFile(uintptr(stderrParent), "child-stderr"),
+		buf:        NewRingBuffer(bufferSize),
+		firstFrame: make(chan struct{}),
+		done:       make(chan struct{}),
+	}
+	go pc.readLoop()
+
+	// Wait for the first frame so callers don't get "no frame yet" immediately.
+	select {
+	case <-pc.firstFrame:
+	case <-pc.done:
+		// readLoop exited before delivering a frame.
+		if ep := pc.readerErr.Load(); ep != nil {
+			return nil, fmt.Errorf("child exited before first frame: %w", *ep)
+		}
+		return nil, errors.New("child exited before first frame")
+	case <-time.After(10 * time.Second):
+		pc.Close()
+		return nil, errors.New("timed out waiting for first frame from child")
+	}
+
+	return pc, nil
 }
 
-// CaptureJPEG asks the child to capture the given display and returns the
-// JPEG payload it writes back. Safe for concurrent callers (calls are
-// serialized internally so they don't interleave on the pipes).
-func (p *PersistentChild) CaptureJPEG(displayIndex uint32) ([]byte, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := writeRequest(p.stdin, displayIndex); err != nil {
-		return nil, fmt.Errorf("writing capture request: %w", err)
+// readLoop reads frames from the child's stdout pipe and stores them in the
+// ring buffer. It runs until the pipe is closed or an error occurs.
+func (p *PersistentChild) readLoop() {
+	defer close(p.done)
+	first := true
+	for {
+		start := time.Now()
+		data, err := readFrame(p.stdout)
+		if err != nil {
+			p.readerErr.Store(&err)
+			return
+		}
+		p.buf.Store(data)
+		done := time.Now()
+		if done.Sub(start) > 800*time.Millisecond {
+			fmt.Fprintf(os.Stderr, "getting latest screenshot from child at %v took %v\n", done, done.Sub(start))
+		}
+		if first {
+			close(p.firstFrame)
+			first = false
+		}
 	}
-	status, payload, err := readResponse(p.stdout)
-	if err != nil {
-		return nil, fmt.Errorf("reading capture response: %w", err)
+}
+
+// LatestFrame returns the most recently captured screenshot as JPEG bytes.
+// It never blocks on pipe I/O; the data comes from the lock-free ring buffer.
+func (p *PersistentChild) LatestFrame() ([]byte, error) {
+	if ep := p.readerErr.Load(); ep != nil {
+		return nil, *ep
 	}
-	if status != statusOK {
-		return nil, fmt.Errorf("child capture error: %s", string(payload))
+	data := p.buf.Load()
+	if data == nil {
+		return nil, errors.New("no frame available yet")
 	}
-	return payload, nil
+	return data, nil
+}
+
+// UpdateDisplayIndex sends a new display index to the child. The child's
+// capture loop picks it up atomically on the next iteration.
+func (p *PersistentChild) UpdateDisplayIndex(displayIndex uint32) error {
+	return writeConfig(p.stdin, displayIndex)
 }
 
 // Stderr returns a reader for the child's stderr stream. The caller MUST
@@ -273,8 +337,13 @@ func (p *PersistentChild) Stderr() io.Reader {
 // multiple times.
 func (p *PersistentChild) Close() error {
 	p.closeOnce.Do(func() {
-		// Closing stdin signals EOF to the child loop, which exits cleanly.
+		// Closing stdin signals EOF to the child's config-reading goroutine,
+		// which causes the capture loop to exit.
 		_ = p.stdin.Close()
+		select {
+		case <-p.done:
+		case <-time.After(2 * time.Second):
+		}
 		event, _ := windows.WaitForSingleObject(p.process, 2000)
 		if event != 0 { // not WAIT_OBJECT_0 -> didn't exit in time, force it
 			_ = windows.TerminateProcess(p.process, 1)

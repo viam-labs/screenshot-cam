@@ -5,8 +5,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"image"
+	"fmt"
 	"image/jpeg"
+	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,13 +23,15 @@ import (
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/spatialmath"
+	"go.viam.com/rdk/utils"
 	"golang.org/x/sys/windows"
 )
 
 var (
-	Screenshot                     = resource.NewModel("viam", "screenshot-cam", "screenshot")
-	errUnimplemented               = errors.New("unimplemented")
-	_                camera.Camera = (*screenshotCamScreenshot)(nil)
+	Screenshot                      = resource.NewModel("viam", "screenshot-cam", "screenshot")
+	errUnimplemented                = errors.New("unimplemented")
+	_                 camera.Camera = (*screenshotCamScreenshot)(nil)
+	shouldSpawnCached               = subproc.ShouldSpawn()
 )
 
 func init() {
@@ -40,13 +46,25 @@ type Config struct {
 	resource.TriviallyValidateConfig
 	// index of display to capture (relevant when there are multiple monitors)
 	DisplayIndex int `json:"display_index"`
+	// when true, use a persistent child process that continuously captures
+	// screenshots into a ring buffer. When false (default), spawn a one-shot
+	// child process per capture request.
+	PersistentMode bool `json:"persistent_mode,omitempty"`
+	// number of slots in the frame ring buffer (minimum 4, rounded up to a
+	// power of 2; only used in persistent mode).
+	BufferSize int `json:"buffer_size,omitempty"`
+	// target resize dimensions for captured screenshots (0 = use default behavior)
+	ResizeWidth  int `json:"resize_width,omitempty"`
+	ResizeHeight int `json:"resize_height,omitempty"`
 }
 
 type screenshotCamScreenshot struct {
+	resource.AlwaysRebuild
 	name resource.Name
 
-	logger logging.Logger
-	cfg    *Config
+	logger       logging.Logger
+	cfg          *Config
+	hasWarnedTmp bool
 
 	cancelCtx  context.Context
 	cancelFunc func()
@@ -76,14 +94,13 @@ func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies,
 		cancelCtx:  cancelCtx,
 		cancelFunc: cancelFunc,
 	}
-	return s, nil
-}
-func (s *screenshotCamScreenshot) Reconfigure(ctx context.Context, deps resource.Dependencies, rawConf resource.Config) error {
-	conf, err := resource.NativeConfig[*Config](rawConf)
-	if err == nil {
-		s.cfg = conf
+	if subproc.ShouldSpawn() && conf.PersistentMode {
+		s.child, err = s.getOrStartPersistentChild()
+		if err != nil {
+			return nil, err
+		}
 	}
-	return err
+	return s, nil
 }
 
 func (s *screenshotCamScreenshot) Name() resource.Name {
@@ -108,16 +125,22 @@ func CheckSession(logger logging.Logger) error {
 	return nil
 }
 
-// getOrStartChild returns the cached persistent child, starting one if needed.
-// It does not hold the child mutex while doing IPC; callers should call
-// CaptureJPEG directly on the returned handle.
-func (s *screenshotCamScreenshot) getOrStartChild() (*subproc.PersistentChild, error) {
+// getOrStartPersistentChild returns the cached persistent child, starting one if needed.
+func (s *screenshotCamScreenshot) getOrStartPersistentChild() (*subproc.PersistentChild, error) {
 	s.childMu.Lock()
 	defer s.childMu.Unlock()
 	if s.child != nil {
 		return s.child, nil
 	}
-	child, err := subproc.StartPersistentChild("-mode persistent")
+	bufSize := s.cfg.BufferSize
+	if bufSize < 4 {
+		bufSize = 4
+	}
+	cmdArgs := "-mode persistent"
+	if s.cfg.ResizeWidth > 0 && s.cfg.ResizeHeight > 0 {
+		cmdArgs += fmt.Sprintf(" -resize-width %d -resize-height %d", s.cfg.ResizeWidth, s.cfg.ResizeHeight)
+	}
+	child, err := subproc.StartPersistentChild(cmdArgs, uint32(s.cfg.DisplayIndex), bufSize)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +157,6 @@ func (s *screenshotCamScreenshot) getOrStartChild() (*subproc.PersistentChild, e
 			}
 		}
 	}(bufio.NewReader(child.Stderr()))
-	s.child = child
 	return child, nil
 }
 
@@ -150,7 +172,7 @@ func (s *screenshotCamScreenshot) invalidateChild(c *subproc.PersistentChild) {
 }
 
 func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
-	if !subproc.ShouldSpawn() {
+	if !shouldSpawnCached {
 		// note: this code isn't reachable on windows in service mode; the NON ShouldSpawn
 		// path hits the persistent child below.
 		if err := CheckSession(s.logger); err != nil {
@@ -168,38 +190,46 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 			return nil, camera.ImageMetadata{}, err
 		}
 		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+	} else if s.cfg.PersistentMode {
+		jpegBytes, err := s.child.LatestFrame()
+		if err != nil {
+			return nil, camera.ImageMetadata{}, err
+		}
+		return jpegBytes, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 	}
-	// Session 0 path: reuse a persistent subprocess running in the active
-	// console session. Recreating the process per request was the dominant
-	// latency on Windows.
-	child, err := s.getOrStartChild()
+	td := os.TempDir()
+	if strings.ToLower(td) == "c:\\windows\\systemtemp" {
+		// this is an experimental workaround for an access denied bug we've seen
+		newTd := "C:\\windows\\TEMP"
+		if !s.hasWarnedTmp {
+			s.hasWarnedTmp = true
+			s.logger.Warnf("applying workaround to rewrite tempdir from %s to %s", td, newTd)
+		}
+		td = newTd
+	}
+	capturePath := filepath.Join(td, fmt.Sprintf("screenshot-cam-%d.jpg", rand.IntN(1000000)))
+	// careful: if you modify the SpawnSelf call, think through the recursion risk. The spawned subprocess
+	// should not itself check ShouldSpawn and spawn again. (Because if ShouldSpawn breaks, you'll create
+	// infinite subprocs).
+	if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", capturePath, s.cfg.DisplayIndex)); err != nil {
+		return nil, camera.ImageMetadata{}, err
+	}
+	defer os.Remove(capturePath)
+	buf, err := os.ReadFile(capturePath)
 	if err != nil {
 		return nil, camera.ImageMetadata{}, err
 	}
-	jpegBytes, err := child.CaptureJPEG(uint32(s.cfg.DisplayIndex))
-	if err != nil {
-		// Pipe error or the child died (e.g. user logged out, taking the
-		// session with it). Drop this child so the next call respawns.
-		s.invalidateChild(child)
-		return nil, camera.ImageMetadata{}, err
-	}
-	return jpegBytes, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+	return buf, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context, filterSourceNames []string, extra map[string]interface{}) ([]camera.NamedImage, resource.ResponseMetadata, error) {
-	mimetype := "image/jpeg"
-	raw, _, err := s.Image(ctx, mimetype, nil)
+	raw, _, err := s.Image(ctx, utils.MimeTypeJPEG, nil)
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
 	}
 
-	reader := bytes.NewReader(raw)
-	img, _, err := image.Decode(reader)
-	if err != nil {
-		return nil, resource.ResponseMetadata{}, err
-	}
 
-	named, err := camera.NamedImageFromImage(img, "screen", mimetype, data.Annotations{})
+	named, err := camera.NamedImageFromBytes(raw, "screen", utils.MimeTypeJPEG, data.Annotations{})
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
 	}
