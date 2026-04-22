@@ -136,13 +136,15 @@ func (p *PersistentChild) Closed() bool { return p.closed.Load() }
 
 // makeInheritablePipe creates an anonymous pipe with both ends inheritable,
 // then clears the inherit flag on the parent's end so only the child end is
-// duplicated into the child by CreateProcessAsUser.
-func makeInheritablePipe(childIsRead bool) (child, parent windows.Handle, err error) {
+// duplicated into the child by CreateProcessAsUser. bufferSizeHint is a hint to
+// the kernel for the pipe buffer size; pass 0 to use the system default
+// (~4 KB on Windows).
+func makeInheritablePipe(childIsRead bool, bufferSizeHint uint32) (child, parent windows.Handle, err error) {
 	var sa windows.SecurityAttributes
 	sa.Length = uint32(unsafe.Sizeof(sa))
 	sa.InheritHandle = 1
 	var r, w windows.Handle
-	if err := windows.CreatePipe(&r, &w, &sa, 0); err != nil {
+	if err := windows.CreatePipe(&r, &w, &sa, bufferSizeHint); err != nil {
 		return 0, 0, err
 	}
 	if childIsRead {
@@ -175,7 +177,7 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 	}
 	defer token.Close()
 
-	stdinChild, stdinParent, err := makeInheritablePipe(true)
+	stdinChild, stdinParent, err := makeInheritablePipe(true, 0)
 	if err != nil {
 		return nil, fmt.Errorf("creating stdin pipe: %w", err)
 	}
@@ -185,7 +187,7 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		}
 	}()
 
-	stdoutChild, stdoutParent, err := makeInheritablePipe(false)
+	stdoutChild, stdoutParent, err := makeInheritablePipe(false, 1<<20)
 	if err != nil {
 		windows.CloseHandle(stdinChild)
 		return nil, fmt.Errorf("creating stdout pipe: %w", err)
@@ -196,7 +198,7 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		}
 	}()
 
-	stderrChild, stderrParent, err := makeInheritablePipe(false)
+	stderrChild, stderrParent, err := makeInheritablePipe(false, 0)
 	if err != nil {
 		windows.CloseHandle(stdinChild)
 		windows.CloseHandle(stdoutChild)
