@@ -120,9 +120,19 @@ type PersistentChild struct {
 	readerErr  atomic.Pointer[error] // set by readLoop on fatal pipe error
 	firstFrame chan struct{}         // closed after the first Store
 	done       chan struct{}         // closed when readLoop exits
+	closed     atomic.Bool           // set by Close() before teardown
 
 	closeOnce sync.Once
 }
+
+// Done returns a channel that is closed when the child process has exited
+// (either crashed or was closed by the parent). Callers can select on it to
+// detect child death.
+func (p *PersistentChild) Done() <-chan struct{} { return p.done }
+
+// Closed reports whether Close() has been called. Used to distinguish clean
+// shutdown from unexpected child death.
+func (p *PersistentChild) Closed() bool { return p.closed.Load() }
 
 // makeInheritablePipe creates an anonymous pipe with both ends inheritable,
 // then clears the inherit flag on the parent's end so only the child end is
@@ -337,6 +347,9 @@ func (p *PersistentChild) Stderr() io.Reader {
 // multiple times.
 func (p *PersistentChild) Close() error {
 	p.closeOnce.Do(func() {
+		// Mark closed BEFORE teardown so supervisors watching Done() can tell
+		// this was a clean shutdown rather than a crash.
+		p.closed.Store(true)
 		// Closing stdin signals EOF to the child's config-reading goroutine,
 		// which causes the capture loop to exit.
 		_ = p.stdin.Close()

@@ -157,6 +157,17 @@ func (s *screenshotCamScreenshot) getOrStartPersistentChild() (*subproc.Persiste
 			}
 		}
 	}(bufio.NewReader(child.Stderr()))
+	// Supervisor: if the child dies unexpectedly, exit the module process so
+	// the viam-server/agent can restart us cleanly. Only fires on crashes —
+	// clean shutdowns via Close() set Closed() and are ignored.
+	go func(c *subproc.PersistentChild) {
+		<-c.Done()
+		if c.Closed() {
+			return
+		}
+		s.logger.Errorf("screenshot-cam persistent child died unexpectedly; exiting module process")
+		os.Exit(1)
+	}(child)
 	return child, nil
 }
 

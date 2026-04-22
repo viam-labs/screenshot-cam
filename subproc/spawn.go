@@ -36,4 +36,12 @@ func (*PersistentChild) UpdateDisplayIndex(displayIndex uint32) error {
 
 func (*PersistentChild) Stderr() io.Reader { return nil }
 
+func (*PersistentChild) Done() <-chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}
+
+func (*PersistentChild) Closed() bool { return true }
+
 func (*PersistentChild) Close() error { return nil }
