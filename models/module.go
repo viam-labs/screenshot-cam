@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kbinani/screenshot"
@@ -71,8 +70,7 @@ type screenshotCamScreenshot struct {
 
 	// persistent child subprocess used in session 0 mode. nil until first use,
 	// re-created after any I/O failure.
-	childMu sync.Mutex
-	child   *subproc.PersistentChild
+	child *subproc.PersistentChild
 }
 
 func newScreenshotCamScreenshot(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (camera.Camera, error) {
@@ -127,8 +125,6 @@ func CheckSession(logger logging.Logger) error {
 
 // getOrStartPersistentChild returns the cached persistent child, starting one if needed.
 func (s *screenshotCamScreenshot) getOrStartPersistentChild() (*subproc.PersistentChild, error) {
-	s.childMu.Lock()
-	defer s.childMu.Unlock()
 	if s.child != nil {
 		return s.child, nil
 	}
@@ -174,8 +170,6 @@ func (s *screenshotCamScreenshot) getOrStartPersistentChild() (*subproc.Persiste
 // invalidateChild closes and clears `c` if it's still the currently cached
 // child. Called after an IPC error so the next request starts a fresh process.
 func (s *screenshotCamScreenshot) invalidateChild(c *subproc.PersistentChild) {
-	s.childMu.Lock()
-	defer s.childMu.Unlock()
 	if s.child == c {
 		s.child = nil
 		go c.Close() // don't block the caller on process teardown
@@ -265,10 +259,8 @@ func (s *screenshotCamScreenshot) DoCommand(ctx context.Context, cmd map[string]
 
 func (s *screenshotCamScreenshot) Close(context.Context) error {
 	s.cancelFunc()
-	s.childMu.Lock()
 	c := s.child
 	s.child = nil
-	s.childMu.Unlock()
 	if c != nil {
 		c.Close()
 	}
