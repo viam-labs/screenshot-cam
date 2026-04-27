@@ -82,6 +82,10 @@ func RunContinuousChildLoop(capture func(displayIndex uint32, buf *bytes.Buffer)
 		}
 	}()
 
+	// don't do this faster than ~30fps. if capture takes 80ms+ as observed, we shouldn't get here
+	ticker := time.NewTicker(33 * time.Millisecond)
+	defer ticker.Stop()
+
 	var buf bytes.Buffer
 	for {
 		select {
@@ -89,7 +93,6 @@ func RunContinuousChildLoop(capture func(displayIndex uint32, buf *bytes.Buffer)
 			return nil
 		default:
 		}
-		start := time.Now()
 		data, capErr := capture(currentDisplay.Load(), &buf)
 		if capErr != nil {
 			fmt.Fprintf(os.Stderr, "capture error: %v\n", capErr)
@@ -98,10 +101,10 @@ func RunContinuousChildLoop(capture func(displayIndex uint32, buf *bytes.Buffer)
 		if err := writeFrame(os.Stdout, data); err != nil {
 			return fmt.Errorf("writing frame: %w", err)
 		}
-		elapsed := time.Since(start).Milliseconds()
-		// don't do this faster than ~30fps. if capture takes 80ms+ as observed, we shouldn't get here
-		if elapsed < 30 {
-			time.Sleep(time.Duration(33-elapsed) * time.Millisecond)
+		select {
+		case <-done:
+			return nil
+		case <-ticker.C:
 		}
 	}
 }
