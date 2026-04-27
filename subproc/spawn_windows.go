@@ -166,17 +166,32 @@ func makeInheritablePipe(childIsRead bool, bufferSizeHint uint32) (child, parent
 // the given display and streaming frames. The returned PersistentChild serves
 // LatestFrame from a lock-free ring buffer; on any fatal error the caller
 // should Close it and start a new one.
+// The child will close when the parent terminates, since it exits on EOF from stdin or write error to stdout
+// and the OS will close these when the parent process exits, whether cleanly or uncleanly.
 func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (_ *PersistentChild, retErr error) {
+	// Path to this same exe — we spawn a copy of ourselves with different args.
 	execPath, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
+	// Get a primary token for the active console user. Required because we run
+	// as LocalSystem in session 0 but the child needs to be in the user's
+	// session so it can see the desktop. Calls WTSGetActiveConsoleSessionId +
+	// WTSQueryUserToken under the hood (needs SE_TCB_PRIVILEGE).
 	token, err := activeUserToken()
 	if err != nil {
 		return nil, err
 	}
 	defer token.Close()
 
+	// Three anonymous pipes for child stdio. makeInheritablePipe creates each
+	// pipe with both ends inheritable, then clears the inherit flag on the
+	// parent's end so only the child end gets duplicated by CreateProcessAsUser.
+	//
+	// childIsRead=true for stdin (child reads from us), false for stdout/stderr
+	// (child writes to us). Each defer closes the parent end ONLY if the
+	// function returns an error — on success the parent end lives on in the
+	// returned PersistentChild.
 	stdinChild, stdinParent, err := makeInheritablePipe(true, 0)
 	if err != nil {
 		return nil, fmt.Errorf("creating stdin pipe: %w", err)
@@ -189,6 +204,8 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 
 	stdoutChild, stdoutParent, err := makeInheritablePipe(false, 1<<20)
 	if err != nil {
+		// Manual cleanup of previously-allocated child-side handle since there's
+		// no defer for it (we close it explicitly after CreateProcessAsUser).
 		windows.CloseHandle(stdinChild)
 		return nil, fmt.Errorf("creating stdout pipe: %w", err)
 	}
@@ -210,8 +227,14 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		}
 	}()
 
+	// Build StartupInfo. Cb must be filled in with the struct size for forward
+	// compat (Win32 versioning convention).
 	si := new(windows.StartupInfo)
 	si.Cb = uint32(unsafe.Sizeof(*si))
+	// Pin the child to the interactive user desktop. Without this it would land
+	// on the service desktop (Service-0x0-3e7$\Default) and BitBlt would
+	// capture nothing useful. The "Winsta0\Default" string is a fixed
+	// Windows-internal name, never localized.
 	si.Desktop, err = syscall.UTF16PtrFromString("Winsta0\\Default")
 	if err != nil {
 		windows.CloseHandle(stdinChild)
@@ -219,11 +242,16 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		windows.CloseHandle(stderrChild)
 		return nil, err
 	}
+	// STARTF_USESTDHANDLES makes StdInput/StdOutput/StdErr below take effect.
+	// Without this flag they're ignored.
 	si.Flags = windows.STARTF_USESTDHANDLES
 	si.StdInput = stdinChild
 	si.StdOutput = stdoutChild
 	si.StdErr = stderrChild
 
+	// Build the command line as a wide string (Win32 expects LPWSTR).
+	// Format: "<exepath> <args>". Windows parses this back into argv on the
+	// child side.
 	cmdLine, err := syscall.UTF16PtrFromString(execPath + " " + cmdArgs)
 	if err != nil {
 		windows.CloseHandle(stdinChild)
@@ -232,17 +260,19 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		return nil, err
 	}
 
+	// Spawn the child as the active console user. pi receives the child's
+	// process+thread handles and PID/TID. bInheritHandles=true is what makes
+	// our inheritable pipe ends actually duplicate into the child.
 	pi := new(windows.ProcessInformation)
 	if err := windows.CreateProcessAsUser(
-		token,
-		nil,
+		token, // user token from activeUserToken()
+		nil,   // app name (nil = parse from cmdLine)
 		cmdLine,
-		nil,
-		nil,
+		nil, nil, // process/thread security attributes (nil = default)
 		true, // bInheritHandles: required so the child receives our pipe ends
-		0,
-		nil,
-		nil,
+		0,    // creation flags (none — child gets default subsystem behavior)
+		nil,  // environment (nil = inherit user's environment)
+		nil,  // current directory (nil = inherit)
 		si,
 		pi,
 	); err != nil {
@@ -251,14 +281,22 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		windows.CloseHandle(stderrChild)
 		return nil, fmt.Errorf("CreateProcessAsUser failed: %v", err)
 	}
-	// The child now owns duplicates of the child-side handles; close ours.
+	// Close OUR copies of the child-side handles. The child now has duplicates
+	// of these as its stdio handles. If we kept them open, the OS would think
+	// the pipes are still alive even when the child exits — so we'd never see
+	// EOF on read and shutdown detection would break.
 	windows.CloseHandle(stdinChild)
 	windows.CloseHandle(stdoutChild)
 	windows.CloseHandle(stderrChild)
 
+	// Wrap our parent-side stdin handle as a Go *os.File so we can use
+	// Write/Close instead of raw Win32 calls.
 	stdinFile := os.NewFile(uintptr(stdinParent), "child-stdin")
 
-	// Send initial config (display index) to the child.
+	// Send the first config message — 4 bytes of LE uint32 display index.
+	// The child's RunContinuousChildLoop blocks at startup waiting for this
+	// (see readConfig at the top of that function). The deferred handle
+	// cleanups don't cover pi.Process/pi.Thread, so close them manually here.
 	if err := writeConfig(stdinFile, displayIndex); err != nil {
 		stdinFile.Close()
 		windows.CloseHandle(pi.Process)
@@ -266,6 +304,9 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		return nil, fmt.Errorf("writing initial config: %w", err)
 	}
 
+	// Hand off ownership of all parent-side resources to the PersistentChild.
+	// firstFrame/done are signaled by readLoop: firstFrame closes after the
+	// first successful Store, done closes when readLoop exits.
 	pc := &PersistentChild{
 		process:    pi.Process,
 		thread:     pi.Thread,
@@ -276,9 +317,15 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		firstFrame: make(chan struct{}),
 		done:       make(chan struct{}),
 	}
+	// Start the background frame reader. It loops on readFrame(p.stdout) and
+	// stores each payload into the ring buffer.
 	go pc.readLoop()
 
-	// Wait for the first frame so callers don't get "no frame yet" immediately.
+	// Wait for the first frame so callers don't get "no frame yet" from their
+	// initial LatestFrame() call. Three outcomes:
+	//   - firstFrame fires: child is streaming; happy path.
+	//   - done fires first: child crashed before producing any output.
+	//   - timeout: child is alive but stuck; tear it down and return an error.
 	select {
 	case <-pc.firstFrame:
 	case <-pc.done:
