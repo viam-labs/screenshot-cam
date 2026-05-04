@@ -1,33 +1,33 @@
 package subproc
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
+	"sync/atomic"
+	"time"
 )
 
-// Wire protocol used by PersistentChild and RunChildLoop. Both sides are in the
-// same binary so we only care about consistency, not stability.
+// Wire protocol used by PersistentChild and RunContinuousChildLoop.
 //
-// Request  (parent -> child): 4 bytes, little-endian uint32 display index.
-// Response (child -> parent): 5 byte header (1 status byte + 4 byte LE uint32
-// payload length), followed by `length` bytes of payload. Status 0 means the
-// payload is JPEG bytes; non-zero means the payload is a UTF-8 error message.
+// Config  (parent -> child on stdin, sent at startup and on reconfigure):
+//
+//	[4 bytes LE uint32: display index]
+//
+// Frames  (child -> parent on stdout, continuous stream):
+//
+//	[4 bytes LE uint32: payload length] [payload: JPEG bytes]
 
-const (
-	statusOK  byte = 0
-	statusErr byte = 1
-)
-
-func writeRequest(w io.Writer, displayIndex uint32) error {
+func writeConfig(w io.Writer, displayIndex uint32) error {
 	var buf [4]byte
 	binary.LittleEndian.PutUint32(buf[:], displayIndex)
 	_, err := w.Write(buf[:])
 	return err
 }
 
-func readRequest(r io.Reader) (uint32, error) {
+func readConfig(r io.Reader) (uint32, error) {
 	var buf [4]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return 0, err
@@ -35,60 +35,76 @@ func readRequest(r io.Reader) (uint32, error) {
 	return binary.LittleEndian.Uint32(buf[:]), nil
 }
 
-func writeResponse(w io.Writer, status byte, payload []byte) error {
-	var header [5]byte
-	header[0] = status
-	binary.LittleEndian.PutUint32(header[1:], uint32(len(payload)))
+func writeFrame(w io.Writer, data []byte) error {
+	var header [4]byte
+	binary.LittleEndian.PutUint32(header[:], uint32(len(data)))
 	if _, err := w.Write(header[:]); err != nil {
 		return err
 	}
-	if len(payload) == 0 {
-		return nil
-	}
-	_, err := w.Write(payload)
+	_, err := w.Write(data)
 	return err
 }
 
-func readResponse(r io.Reader) (byte, []byte, error) {
-	var header [5]byte
+func readFrame(r io.Reader) ([]byte, error) {
+	var header [4]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
-		return 0, nil, err
+		return nil, err
 	}
-	status := header[0]
-	length := binary.LittleEndian.Uint32(header[1:])
-	if length == 0 {
-		return status, nil, nil
-	}
+	length := binary.LittleEndian.Uint32(header[:])
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(r, payload); err != nil {
-		return 0, nil, err
+		return nil, err
 	}
-	return status, payload, nil
+	return payload, nil
 }
 
-// RunChildLoop reads capture requests from os.Stdin in a loop, calls capture()
-// to produce JPEG bytes, and writes responses back to os.Stdout. It returns
-// nil on a clean EOF (parent closed our stdin) and an error otherwise. If
-// capture() returns an error the loop continues; the error is reported to the
-// parent in the response and the next request is served.
-func RunChildLoop(capture func(displayIndex uint32) ([]byte, error)) error {
-	for {
-		displayIndex, err := readRequest(os.Stdin)
-		if err != nil {
-			if err == io.EOF {
-				return nil
+// RunContinuousChildLoop reads an initial config from stdin, then continuously
+// calls capture and writes JPEG frames to stdout. It watches stdin for config
+// updates (display index changes) and EOF (shutdown signal from parent).
+func RunContinuousChildLoop(capture func(displayIndex uint32, buf *bytes.Buffer) ([]byte, error)) error {
+	displayIndex, err := readConfig(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("reading initial config: %w", err)
+	}
+	var currentDisplay atomic.Uint32
+	currentDisplay.Store(displayIndex)
+
+	//// Watch stdin for config updates and EOF.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			idx, err := readConfig(os.Stdin)
+			if err != nil {
+				return // EOF or broken pipe -> parent wants us to exit
 			}
-			return fmt.Errorf("reading request: %w", err)
+			currentDisplay.Store(idx)
 		}
-		data, capErr := capture(displayIndex)
-		status := statusOK
-		payload := data
+	}()
+
+	// don't do this faster than ~30fps. if capture takes 80ms+ as observed, we shouldn't get here
+	ticker := time.NewTicker(33 * time.Millisecond)
+	defer ticker.Stop()
+
+	var buf bytes.Buffer
+	for {
+		select {
+		case <-done:
+			return nil
+		default:
+		}
+		data, capErr := capture(currentDisplay.Load(), &buf)
 		if capErr != nil {
-			status = statusErr
-			payload = []byte(capErr.Error())
+			fmt.Fprintf(os.Stderr, "capture error: %v\n", capErr)
+			continue
 		}
-		if err := writeResponse(os.Stdout, status, payload); err != nil {
-			return fmt.Errorf("writing response: %w", err)
+		if err := writeFrame(os.Stdout, data); err != nil {
+			return fmt.Errorf("writing frame: %w", err)
+		}
+		select {
+		case <-done:
+			return nil
+		case <-ticker.C:
 		}
 	}
 }

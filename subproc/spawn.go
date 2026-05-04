@@ -22,14 +22,26 @@ func SpawnSelf(cmdArgs string) error {
 type PersistentChild struct{}
 
 // StartPersistentChild is unsupported off Windows.
-func StartPersistentChild(cmdArgs string) (*PersistentChild, error) {
+func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (*PersistentChild, error) {
 	return nil, errors.New("StartPersistentChild not supported on non-windows platforms")
 }
 
-func (*PersistentChild) CaptureJPEG(displayIndex uint32) ([]byte, error) {
+func (*PersistentChild) LatestFrame() ([]byte, error) {
 	return nil, errors.New("not supported on non-windows platforms")
 }
 
+func (*PersistentChild) UpdateDisplayIndex(displayIndex uint32) error {
+	return errors.New("not supported on non-windows platforms")
+}
+
 func (*PersistentChild) Stderr() io.Reader { return nil }
+
+func (*PersistentChild) Done() <-chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}
+
+func (*PersistentChild) Closed() bool { return true }
 
 func (*PersistentChild) Close() error { return nil }
