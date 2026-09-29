@@ -176,7 +176,7 @@ func (s *screenshotCamScreenshot) invalidateChild(c *subproc.PersistentChild) {
 	}
 }
 
-func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, extra map[string]interface{}) ([]byte, camera.ImageMetadata, error) {
+func (s *screenshotCamScreenshot) captureImageBytes() ([]byte, error) {
 	if !shouldSpawnCached {
 		// note: this code isn't reachable on windows in service mode; the NON ShouldSpawn
 		// path hits the persistent child below.
@@ -188,19 +188,19 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 			if err := windows.GetLastError(); err != nil {
 				s.logger.Warnf("windows last error %s", err)
 			}
-			return nil, camera.ImageMetadata{}, err
+			return nil, err
 		}
 		var buf bytes.Buffer
 		if err := jpeg.Encode(bufio.NewWriter(&buf), img, nil); err != nil {
-			return nil, camera.ImageMetadata{}, err
+			return nil, err
 		}
-		return buf.Bytes(), camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+		return buf.Bytes(), nil
 	} else if s.cfg.PersistentMode {
 		jpegBytes, err := s.child.LatestFrame()
 		if err != nil {
-			return nil, camera.ImageMetadata{}, err
+			return nil, err
 		}
-		return jpegBytes, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+		return jpegBytes, nil
 	}
 	td := os.TempDir()
 	if strings.ToLower(td) == "c:\\windows\\systemtemp" {
@@ -217,22 +217,21 @@ func (s *screenshotCamScreenshot) Image(ctx context.Context, mimeType string, ex
 	// should not itself check ShouldSpawn and spawn again. (Because if ShouldSpawn breaks, you'll create
 	// infinite subprocs).
 	if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", capturePath, s.cfg.DisplayIndex)); err != nil {
-		return nil, camera.ImageMetadata{}, err
+		return nil, err
 	}
 	defer os.Remove(capturePath)
 	buf, err := os.ReadFile(capturePath)
 	if err != nil {
-		return nil, camera.ImageMetadata{}, err
+		return nil, err
 	}
-	return buf, camera.ImageMetadata{MimeType: "image/jpeg"}, nil
+	return buf, nil
 }
 
 func (s *screenshotCamScreenshot) Images(ctx context.Context, filterSourceNames []string, extra map[string]interface{}) ([]camera.NamedImage, resource.ResponseMetadata, error) {
-	raw, _, err := s.Image(ctx, utils.MimeTypeJPEG, nil)
+	raw, err := s.captureImageBytes()
 	if err != nil {
 		return nil, resource.ResponseMetadata{}, err
 	}
-
 
 	named, err := camera.NamedImageFromBytes(raw, "screen", utils.MimeTypeJPEG, data.Annotations{})
 	if err != nil {
@@ -255,6 +254,10 @@ func (s *screenshotCamScreenshot) Properties(ctx context.Context) (camera.Proper
 
 func (s *screenshotCamScreenshot) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	return nil, errUnimplemented
+}
+
+func (s *screenshotCamScreenshot) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
 }
 
 func (s *screenshotCamScreenshot) Close(context.Context) error {
