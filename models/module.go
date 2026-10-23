@@ -167,15 +167,6 @@ func (s *screenshotCamScreenshot) getOrStartPersistentChild() (*subproc.Persiste
 	return child, nil
 }
 
-// invalidateChild closes and clears `c` if it's still the currently cached
-// child. Called after an IPC error so the next request starts a fresh process.
-func (s *screenshotCamScreenshot) invalidateChild(c *subproc.PersistentChild) {
-	if s.child == c {
-		s.child = nil
-		go c.Close() // don't block the caller on process teardown
-	}
-}
-
 func (s *screenshotCamScreenshot) captureImageBytes() ([]byte, error) {
 	if !shouldSpawnCached {
 		// note: this code isn't reachable on windows in service mode; the NON ShouldSpawn
@@ -219,7 +210,7 @@ func (s *screenshotCamScreenshot) captureImageBytes() ([]byte, error) {
 	if err := subproc.SpawnSelf(fmt.Sprintf(" -mode child -path %s -display %d", capturePath, s.cfg.DisplayIndex)); err != nil {
 		return nil, err
 	}
-	defer os.Remove(capturePath)
+	defer func() { _ = os.Remove(capturePath) }()
 	buf, err := os.ReadFile(capturePath)
 	if err != nil {
 		return nil, err
@@ -265,7 +256,9 @@ func (s *screenshotCamScreenshot) Close(context.Context) error {
 	c := s.child
 	s.child = nil
 	if c != nil {
-		c.Close()
+		if err := c.Close(); err != nil {
+			s.logger.Warnf("error closing persistent child: %s", err)
+		}
 	}
 	return nil
 }

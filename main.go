@@ -82,9 +82,9 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		defer child.Close()
+		defer func() { _ = child.Close() }()
 		// drain child stderr to ours so panics/log lines are visible
-		go io.Copy(os.Stderr, child.Stderr())
+		go func() { _, _ = io.Copy(os.Stderr, child.Stderr()) }()
 
 		t0 := time.Now()
 		for i := uint(0); i < *nTries; i++ {
