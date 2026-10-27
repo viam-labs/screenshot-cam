@@ -58,7 +58,7 @@ func SpawnSelf(cmdArgs string) error {
 	if err != nil {
 		return err
 	}
-	defer token.Close()
+	defer func() { _ = token.Close() }()
 	// todo: why do some docs recommend this here?
 	// var token windows.Token
 	// err = windows.DuplicateTokenEx(origToken, windows.MAXIMUM_ALLOWED, nil, windows.SecurityImpersonation, windows.TokenPrimary, &token)
@@ -98,8 +98,8 @@ func SpawnSelf(cmdArgs string) error {
 	if err != nil {
 		return fmt.Errorf("CreateProcessAsUser failed: %v", err)
 	}
-	defer windows.CloseHandle(pi.Process)
-	defer windows.CloseHandle(pi.Thread)
+	defer func() { _ = windows.CloseHandle(pi.Process) }()
+	defer func() { _ = windows.CloseHandle(pi.Thread) }()
 	_, err = windows.WaitForSingleObject(pi.Process, windows.INFINITE)
 	// todo: do something useful with error code from subproc. currently we're not detecting failure.
 	return err
@@ -153,8 +153,8 @@ func makeInheritablePipe(childIsRead bool, bufferSizeHint uint32) (child, parent
 		child, parent = w, r
 	}
 	if err := windows.SetHandleInformation(parent, windows.HANDLE_FLAG_INHERIT, 0); err != nil {
-		windows.CloseHandle(r)
-		windows.CloseHandle(w)
+		_ = windows.CloseHandle(r)
+		_ = windows.CloseHandle(w)
 		return 0, 0, err
 	}
 	return child, parent, nil
@@ -182,7 +182,7 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 	if err != nil {
 		return nil, err
 	}
-	defer token.Close()
+	defer func() { _ = token.Close() }()
 
 	// Three anonymous pipes for child stdio. makeInheritablePipe creates each
 	// pipe with both ends inheritable, then clears the inherit flag on the
@@ -198,7 +198,7 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 	}
 	defer func() {
 		if retErr != nil {
-			windows.CloseHandle(stdinParent)
+			_ = windows.CloseHandle(stdinParent)
 		}
 	}()
 
@@ -206,24 +206,24 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 	if err != nil {
 		// Manual cleanup of previously-allocated child-side handle since there's
 		// no defer for it (we close it explicitly after CreateProcessAsUser).
-		windows.CloseHandle(stdinChild)
+		_ = windows.CloseHandle(stdinChild)
 		return nil, fmt.Errorf("creating stdout pipe: %w", err)
 	}
 	defer func() {
 		if retErr != nil {
-			windows.CloseHandle(stdoutParent)
+			_ = windows.CloseHandle(stdoutParent)
 		}
 	}()
 
 	stderrChild, stderrParent, err := makeInheritablePipe(false, 0)
 	if err != nil {
-		windows.CloseHandle(stdinChild)
-		windows.CloseHandle(stdoutChild)
+		_ = windows.CloseHandle(stdinChild)
+		_ = windows.CloseHandle(stdoutChild)
 		return nil, fmt.Errorf("creating stderr pipe: %w", err)
 	}
 	defer func() {
 		if retErr != nil {
-			windows.CloseHandle(stderrParent)
+			_ = windows.CloseHandle(stderrParent)
 		}
 	}()
 
@@ -237,9 +237,9 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 	// Windows-internal name, never localized.
 	si.Desktop, err = syscall.UTF16PtrFromString("Winsta0\\Default")
 	if err != nil {
-		windows.CloseHandle(stdinChild)
-		windows.CloseHandle(stdoutChild)
-		windows.CloseHandle(stderrChild)
+		_ = windows.CloseHandle(stdinChild)
+		_ = windows.CloseHandle(stdoutChild)
+		_ = windows.CloseHandle(stderrChild)
 		return nil, err
 	}
 	// STARTF_USESTDHANDLES makes StdInput/StdOutput/StdErr below take effect.
@@ -254,9 +254,9 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 	// child side.
 	cmdLine, err := syscall.UTF16PtrFromString(execPath + " " + cmdArgs)
 	if err != nil {
-		windows.CloseHandle(stdinChild)
-		windows.CloseHandle(stdoutChild)
-		windows.CloseHandle(stderrChild)
+		_ = windows.CloseHandle(stdinChild)
+		_ = windows.CloseHandle(stdoutChild)
+		_ = windows.CloseHandle(stderrChild)
 		return nil, err
 	}
 
@@ -276,18 +276,18 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		si,
 		pi,
 	); err != nil {
-		windows.CloseHandle(stdinChild)
-		windows.CloseHandle(stdoutChild)
-		windows.CloseHandle(stderrChild)
+		_ = windows.CloseHandle(stdinChild)
+		_ = windows.CloseHandle(stdoutChild)
+		_ = windows.CloseHandle(stderrChild)
 		return nil, fmt.Errorf("CreateProcessAsUser failed: %v", err)
 	}
 	// Close OUR copies of the child-side handles. The child now has duplicates
 	// of these as its stdio handles. If we kept them open, the OS would think
 	// the pipes are still alive even when the child exits — so we'd never see
 	// EOF on read and shutdown detection would break.
-	windows.CloseHandle(stdinChild)
-	windows.CloseHandle(stdoutChild)
-	windows.CloseHandle(stderrChild)
+	_ = windows.CloseHandle(stdinChild)
+	_ = windows.CloseHandle(stdoutChild)
+	_ = windows.CloseHandle(stderrChild)
 
 	// Wrap our parent-side stdin handle as a Go *os.File so we can use
 	// Write/Close instead of raw Win32 calls.
@@ -298,9 +298,9 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 	// (see readConfig at the top of that function). The deferred handle
 	// cleanups don't cover pi.Process/pi.Thread, so close them manually here.
 	if err := writeConfig(stdinFile, displayIndex); err != nil {
-		stdinFile.Close()
-		windows.CloseHandle(pi.Process)
-		windows.CloseHandle(pi.Thread)
+		_ = stdinFile.Close()
+		_ = windows.CloseHandle(pi.Process)
+		_ = windows.CloseHandle(pi.Thread)
 		return nil, fmt.Errorf("writing initial config: %w", err)
 	}
 
@@ -335,7 +335,7 @@ func StartPersistentChild(cmdArgs string, displayIndex uint32, bufferSize int) (
 		}
 		return nil, errors.New("child exited before first frame")
 	case <-time.After(10 * time.Second):
-		pc.Close()
+		_ = pc.Close()
 		return nil, errors.New("timed out waiting for first frame from child")
 	}
 
